@@ -8,4 +8,6 @@ referenced from USB port on left, antenna on right
 
 CLK SD0 SD1 P15 P2 P0 P4 P16 P17 P5 P18 P19 GND P21 RX TX P22 P23 GND
 
+I2C pins for display: SDA - P21 , SCL - P22
+
 Flash blink example onto the board to verify functionality
