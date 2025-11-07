@@ -1,1 +1,101 @@
+# --- OS & Editor junk ---
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*.log
+.idea/
+.vscode/
+*.code-workspace
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+pip-wheel-metadata/
 .env
+.venv/
+venv/
+env/
+ENV/
+*.sqlite3
+
+# --- Node / React Native / JS Frontend ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+.pnp.js
+.expo/
+.expo-shared/
+dist/
+coverage/
+.next/
+out/
+.DS_Store
+
+# --- Django / Flask ---
+*.db
+*.sqlite3
+*.log
+media/
+staticfiles/
+instance/
+*.pyc
+
+# --- Secrets ---
+.env
+.env.*
+secrets.json
+config.json
+credentials.json
+*.pem
+*.key
+
+# --- Compiled binaries & misc ---
+*.out
+*.o
+*.obj
+*.dll
+*.so
+*.a
+*.class
+*.jar
+*.war
+*.iml
+
+# --- Cache / Temporary ---
+.cache/
+tmp/
+temp/
+__MACOSX/
+*.tmp
+
+# --- Jupyter / Data Science ---
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+*.csv
+*.tsv
+*.dat
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.pkl
+
+# --- OS metadata ---
+ehthumbs.db
+Icon?
+*.lnk
+
+# --- VS Code workspace history ---
+.history/
