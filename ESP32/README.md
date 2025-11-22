@@ -1,4 +1,10 @@
-Board: ESP32 Dev Module
+Chip Information:
+Chip Model: ESP32-D0WD-V3
+Chip Revision: 301
+Number of CPU Cores: 2
+CPU Frequency: 240 MHz
+Flash Size: 4 MB
+Flash Speed: 80 MHz
 
 PINOUT (google one doesn't correspond to our board)
 
