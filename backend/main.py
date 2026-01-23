@@ -1,8 +1,5 @@
 from fastapi import FastAPI
-from dotenv import load_dotenv
-from transit_api.providers.go import get_next_departure
-
-load_dotenv()
+from transit_api.providers.go import get_departures
 
 app = FastAPI(title="Commubu Transit API")
 
@@ -12,5 +9,5 @@ def health():
 
 @app.get("/api/next")
 def next_departure():
-    dep = get_next_departure()
+    dep = get_departures()
     return dep or {"message": "No upcoming departures"}
