@@ -23,7 +23,7 @@ def normalize(dep):
         "time": dep.get("Time"),
         "platform": dep.get("Platform"),
         "status": dep.get("Info"),
-        "_sort_time": parse_time(dep.get("Time")),  # internal only
+        "_sort_time": parse_time(dep.get("Time")),
     }
 
 
@@ -62,7 +62,6 @@ def get_departures(limit=10):
     return normalized[:limit]
 
 
-# ---- manual test ----
 if __name__ == "__main__":
     from pprint import pprint
     pprint(get_departures())
