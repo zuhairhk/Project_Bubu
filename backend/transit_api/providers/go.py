@@ -31,7 +31,8 @@ def get_departures(limit=10):
     resp = requests.get(
         BASE_URL,
         params={"key": KEY},
-        timeout=10
+        timeout=10,
+        verify=False
     )
     resp.raise_for_status()
 
