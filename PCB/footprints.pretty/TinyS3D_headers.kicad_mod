@@ -4,7 +4,7 @@
 	(generator_version "9.0")
 	(layer "F.Cu")
 	(property "Reference" "REF**"
-		(at 7 16.25 0)
+		(at 7 21.25 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "88613414-bef9-40f9-b49b-a1a375031fdd")
@@ -55,24 +55,24 @@
 	)
 	(attr through_hole)
 	(fp_line
-		(start -8.95 -17.9)
-		(end 9 -17.9)
+		(start -8.95 -22.9)
+		(end 9 -22.9)
 		(stroke
 			(width 0.1)
 			(type default)
 		)
 		(layer "F.SilkS")
-		(uuid "17239623-b69a-48e6-b998-3eeed6e3e2df")
+		(uuid "bb18b870-c6f6-4d6d-917e-9b05e6af7951")
 	)
 	(fp_line
-		(start -8.95 15.3)
-		(end -8.95 -17.9)
+		(start -8.95 20.3)
+		(end -8.95 -22.9)
 		(stroke
 			(width 0.1)
 			(type default)
 		)
 		(layer "F.SilkS")
-		(uuid "cd55ef5d-141e-407f-af59-8bb08860b889")
+		(uuid "6096b8fe-c697-40d3-bcec-1f8b0a50f4b3")
 	)
 	(fp_line
 		(start -7.63 -11.43)
@@ -195,24 +195,24 @@
 		(uuid "adfac2a2-9704-4755-99b4-95722ea5e40e")
 	)
 	(fp_line
-		(start 9 -17.9)
-		(end 9 15.3)
+		(start 9 -22.9)
+		(end 9 20.3)
 		(stroke
 			(width 0.1)
 			(type default)
 		)
 		(layer "F.SilkS")
-		(uuid "387173aa-a643-4657-ba97-55c2a48a3a9d")
+		(uuid "611bff1d-8ac6-4ee3-b41b-727ab6af9731")
 	)
 	(fp_line
-		(start 9 15.3)
-		(end -8.95 15.3)
+		(start 9 20.3)
+		(end -8.95 20.3)
 		(stroke
 			(width 0.1)
 			(type default)
 		)
 		(layer "F.SilkS")
-		(uuid "58ec03c0-4f67-4865-91eb-c598c6ff2de6")
+		(uuid "3c59e0d8-bcaf-48e2-bbcc-f1d71b91fdf3")
 	)
 	(fp_line
 		(start -8.1 -14.5)
@@ -939,7 +939,7 @@
 		)
 		(polygon
 			(pts
-				(xy -8.95 -17.9) (xy 9 -17.9) (xy 9 15.3) (xy -8.95 15.3)
+				(xy -8.95 -22.9) (xy 9 -22.9) (xy 9 20.3) (xy -8.95 20.3)
 			)
 		)
 	)
