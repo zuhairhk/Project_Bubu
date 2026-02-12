@@ -260,7 +260,7 @@
 		(symbol "switch3_0_1"
 			(rectangle
 				(start 0 11.43)
-				(end 17.78 0)
+				(end 15.24 0)
 				(stroke
 					(width 0)
 					(type default)
@@ -272,7 +272,7 @@
 		)
 		(symbol "switch3_1_1"
 			(pin power_in line
-				(at 2.54 0 90)
+				(at 1.27 0 90)
 				(length 2.54)
 				(name "GND"
 					(effects
@@ -290,7 +290,7 @@
 				)
 			)
 			(pin input line
-				(at 6.35 0 90)
+				(at 5.08 0 90)
 				(length 2.54)
 				(name "BTN1"
 					(effects
@@ -308,7 +308,7 @@
 				)
 			)
 			(pin input line
-				(at 10.16 0 90)
+				(at 8.89 0 90)
 				(length 2.54)
 				(name "BTN2"
 					(effects
@@ -326,7 +326,7 @@
 				)
 			)
 			(pin input line
-				(at 13.97 0 90)
+				(at 12.7 0 90)
 				(length 2.54)
 				(name "BTN3"
 					(effects
