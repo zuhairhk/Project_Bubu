@@ -2,82 +2,80 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_ADXL345_U.h>
 
-// I'll keep these here so I can turn them off if the serial monitor gets too messy
-#define DO_RAW_CALC 
-#define DO_DYN_CALC
+/* --- CALIBRATION --- */
+const float ALPHA = 0.94;           // Slightly faster tracking of gravity
+const float NEW_THRESH_UP  = 2.8;   // INCREASED: Requires a stronger impact (was 1.5)
+const float NEW_THRESH_LOW = 1.2;   // INCREASED: Higher floor to prevent jitter (was 0.8)
+const int   MIN_STEP_TIME  = 300;   // DEBOUNCE: Minimum ms between steps (approx. 3 steps/sec max)
 
 Adafruit_ADXL345_Unified accel = Adafruit_ADXL345_Unified(12345);
 
-// switch pins
-int s1 = 12; // for the sqrt(x2+y2+z2) one
-int s2 = 14; // for the dynamic one with gravity removed
+float x_avg = 0, y_avg = 0, z_avg = 0; 
+int stepsOld = 0;
+int stepsNew = 0;
+bool stateOld = false;
+bool stateNew = false;
+unsigned long lastStepTime = 0;     // Tracks when the last "New Step" occurred
 
-// filter stuff from the diagram
-float x_filt = 0;
-float y_filt = 0;
-float z_filt = 0;
-float a = 0.98; // alpha constant
-
-void setup(void) {
+void setup() {
   Serial.begin(115200);
+  Wire.begin(21, 22);
+  if(!accel.begin()) { while(1); }
   
-  pinMode(s1, INPUT_PULLUP);
-  pinMode(s2, INPUT_PULLUP);
+  accel.setRange(ADXL345_RANGE_8_G); 
 
-  if(!accel.begin()) {
-    Serial.println("sensor failed lol");
-    while(1);
-  }
-  
-  accel.setRange(ADXL345_RANGE_16_G);
+  sensors_event_t event;
+  accel.getEvent(&event);
+  x_avg = event.acceleration.x; 
+  y_avg = event.acceleration.y; 
+  z_avg = event.acceleration.z;
 }
 
-void loop(void) {
+void loop() {
   sensors_event_t event;
   accel.getEvent(&event);
 
-  // getting raw values
-  float x = event.acceleration.x;
-  float y = event.acceleration.y;
-  float z = event.acceleration.z;
+  // 1. Filtering
+  x_avg = (ALPHA * x_avg) + ((1.0 - ALPHA) * event.acceleration.x);
+  y_avg = (ALPHA * y_avg) + ((1.0 - ALPHA) * event.acceleration.y);
+  z_avg = (ALPHA * z_avg) + ((1.0 - ALPHA) * event.acceleration.z);
+  
+  float total_raw = sqrt(pow(event.acceleration.x, 2) + pow(event.acceleration.y, 2) + pow(event.acceleration.z, 2));
+  float total_new = sqrt(pow(event.acceleration.x - x_avg, 2) + pow(event.acceleration.y - y_avg, 2) + pow(event.acceleration.z - z_avg, 2));
 
-  // LPF - gravity vector calculation (the 0.98 * avg + 0.02 * instantaneous)
-  x_filt = (a * x_filt) + ((1.0 - a) * x);
-  y_filt = (a * y_filt) + ((1.0 - a) * y);
-  z_filt = (a * z_filt) + ((1.0 - a) * z);
-
-  // check if switches are pressed (to ground)
-  bool btn1 = digitalRead(s1) == LOW;
-  bool btn2 = digitalRead(s2) == LOW;
-
-  #ifdef DO_RAW_CALC
-  if(btn1){
-    // Initial Equation: A_total = sqrt(X^2 + Y^2 + Z^2)
-    float raw_mag = sqrt((x*x) + (y*y) + (z*z));
-    Serial.print("Raw_Mag: ");
-    Serial.print(raw_mag);
-    Serial.print("  ");
-  }
-  #endif
-
-  #ifdef DO_DYN_CALC
-  if(btn2){
-    // Dynamic Magnitude: sqrt((X-Xavg)^2 + (Y-Yavg)^2 + (Z-Zavg)^2)
-    // this removes the 9.8 gravity noise
-    float dx = x - x_filt;
-    float dy = y - y_filt;
-    float dz = z - z_filt;
-    float dyn_mag = sqrt((dx*dx) + (dy*dy) + (dz*dz));
-    
-    Serial.print("Dyn_Mag: ");
-    Serial.print(dyn_mag);
-  }
-  #endif
-
-  // only print a newline if we are actually printing data
-  if(btn1 || btn2){
-    Serial.println(""); 
+  // 2. OLD LOGIC (Keep as a baseline)
+  if (total_raw > 12.0 && !stateOld) { // Bumped to 12.0 for better raw accuracy
+    stepsOld++; 
+    stateOld = true;
+  } else if (total_raw < 10.5) { 
+    stateOld = false; 
   }
 
-  delay(50); // sampling rate... might need to adjust this for actual walking
+  // 3. NEW LOGIC (Improved Sensitivity & Debounce)
+  unsigned long currentTime = millis();
+  
+  if (total_new > NEW_THRESH_UP && !stateNew) {
+    // Check if enough time has passed since the last step
+    if (currentTime - lastStepTime > MIN_STEP_TIME) {
+      stepsNew++;
+      lastStepTime = currentTime; 
+      stateNew = true; // Lock the trigger
+    }
+  } else if (total_new < NEW_THRESH_LOW) {
+    stateNew = false; // Reset only when motion drops below the lower threshold
+  }
+
+  // --- SERIAL OUTPUT ---
+  Serial.print("FilteredMag:");
+  Serial.print(total_new);
+  Serial.print(",");
+
+  Serial.print("OldSteps:");
+  Serial.print(stepsOld);
+  Serial.print(",");
+
+  Serial.print("NewSteps");
+  Serial.println(stepsNew);
+
+  delay(40); // Slightly faster sampling for better peak detection
 }
