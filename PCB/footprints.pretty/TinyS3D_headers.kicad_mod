@@ -215,8 +215,8 @@
 		(uuid "3c59e0d8-bcaf-48e2-bbcc-f1d71b91fdf3")
 	)
 	(fp_rect
-		(start -1.9 16.1)
-		(end 1.9 20.3)
+		(start -4.07 14.1)
+		(end 4.14 20.3)
 		(stroke
 			(width 0.1)
 			(type default)
@@ -517,6 +517,19 @@
 		(effects
 			(font
 				(size 0.7 0.7)
+				(thickness 0.1)
+			)
+			(justify left bottom)
+		)
+	)
+	(fp_text user "USB"
+		(at -1.5 18 0)
+		(unlocked yes)
+		(layer "F.SilkS")
+		(uuid "76e50af1-19b2-4356-b912-d22b59f5a7f2")
+		(effects
+			(font
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
