@@ -406,117 +406,117 @@
 		(uuid "61c7af87-c039-447e-958f-3562a7874e7d")
 	)
 	(fp_text user "8"
-		(at 3.75 0.5 0)
+		(at 3.5 0.6 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "04b8c29b-c156-416d-90fd-fa2ecaef37a1")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "36"
-		(at 3 8 0)
+		(at 2.6 8.3 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "3f5bbdcf-bd55-4371-bffb-923f937d3a01")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "3V3"
-		(at -4.5 5.5 0)
+		(at -4.5 5.7 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "466b7398-bf54-4bc1-bbc6-83cc87730127")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "1"
-		(at -4.5 3 0)
+		(at -4.5 3.1 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "47783772-4a80-4b4e-9f15-cffafa3d3313")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "37"
-		(at 3 10.5 0)
+		(at 2.6 10.8 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "4ae4cc02-a636-47ef-867a-21c91a49de25")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "34"
-		(at 3 5.5 0)
+		(at 2.6 5.8 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "4dbbff7b-79e6-4261-ad5f-ceef68f0ef33")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "3"
-		(at -4.5 -2.25 0)
+		(at -4.5 -1.9 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "689277f1-bf37-4c67-bcee-25a5e478bf9b")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "9"
-		(at 3.75 3 0)
+		(at 3.5 3.1 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "6c10a686-622a-420f-aeeb-5607577b5764")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "7"
-		(at 3.75 -2 0)
+		(at 3.5 -1.8 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "6ceee40e-8c5f-4279-9ab8-91a4b0fe5203")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
@@ -536,182 +536,182 @@
 		)
 	)
 	(fp_text user "35"
-		(at 3 13 0)
+		(at 2.6 13.3 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "7fd0c3f0-4a00-4235-ac7e-35751971cf19")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "5V"
-		(at -4.5 8 0)
+		(at -4.5 8.2 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "82551181-dce0-4ce0-8d59-a0fb59307076")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "TX"
-		(at 3.25 -12.25 0)
+		(at 2.7 -12.1 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "a49b54f8-98fa-4238-8306-b785701c0689")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "6"
-		(at 3.75 -4.75 0)
+		(at 3.5 -4.5 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "a51ab303-9bd4-4965-a102-eccd909659df")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "0"
-		(at -4.5 -12.25 0)
+		(at -4.5 -12 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "ac1ee07c-09e5-438d-aa05-f3d528fa42e1")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "5"
-		(at -4.5 -7.25 0)
+		(at -4.5 -6.9 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "b9526c92-b856-4b5a-80d4-92c813700cfc")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "GND"
-		(at -4.5 10.5 0)
+		(at -4.5 10.7 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "bb3db701-670f-487a-8943-ae47eb09d967")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "BAT"
-		(at -4.5 13 0)
+		(at -4.5 13.3 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "da9c35d2-edf0-4ce5-b744-b6fb0e8eb1c4")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "RST"
-		(at 2.5 -7.25 0)
+		(at 1.7 -7 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "e9fb5c5d-0d71-44b7-99e6-078d3c9b5cc9")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "21"
-		(at -4.5 -9.75 0)
+		(at -4.5 -9.5 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "ec89fa3a-611d-4b9d-95ad-7ae7be9328e8")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "RX"
-		(at 3 -14.75 0)
+		(at 2.5 -14.6 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "eea19605-4383-4e84-b0be-e037242734d8")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "4"
-		(at -4.5 -4.75 0)
+		(at -4.5 -4.5 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "f54abaac-447e-4b84-bfb1-43b0025c4d0c")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "2"
-		(at -4.5 0.25 0)
+		(at -4.5 0.6 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "f7c80555-af28-4af9-97a3-062db86074aa")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
 		)
 	)
 	(fp_text user "GND"
-		(at 2.25 -9.75 0)
+		(at 1.5 -9.5 0)
 		(unlocked yes)
 		(layer "F.SilkS")
 		(uuid "f89187f3-88c0-4111-a440-4e48d1fc2d28")
 		(effects
 			(font
-				(size 0.7 0.7)
+				(size 1 1)
 				(thickness 0.1)
 			)
 			(justify left bottom)
