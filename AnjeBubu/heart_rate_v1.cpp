@@ -80,16 +80,199 @@ Adafruit_ST7789 tft = Adafruit_ST7789(&SPI, TFT_CS, TFT_DC, TFT_RST);
 static void screenOff() { digitalWrite(TFT_BL, LOW); }
 static void screenOn()  { digitalWrite(TFT_BL, HIGH); }
 
-/* ===================== BLE UUIDs ===================== */
+
+// ===================== BLE UUIDs and Characteristics =====================
 static const char* BLE_NAME = "Commubu";
+// Primary service
 static NimBLEUUID SERVICE_UUID("6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
-static NimBLEUUID CHAR_UUID_RX("6E400002-B5A3-F393-E0A9-E50E24DCCA9E");
-static NimBLEUUID CHAR_UUID_TX("6E400003-B5A3-F393-E0A9-E50E24DCCA9E");
+// UART-style characteristics
+static NimBLEUUID CHAR_UUID_RX    ("6E400002-B5A3-F393-E0A9-E50E24DCCA9E");
+static NimBLEUUID CHAR_UUID_TX    ("6E400003-B5A3-F393-E0A9-E50E24DCCA9E");
+// Parameter characteristics
+static NimBLEUUID CHAR_UUID_NAME  ("6E400004-B5A3-F393-E0A9-E50E24DCCA9E");
+static NimBLEUUID CHAR_UUID_SONG  ("6E400005-B5A3-F393-E0A9-E50E24DCCA9E");
+static NimBLEUUID CHAR_UUID_ARTIST("6E400006-B5A3-F393-E0A9-E50E24DCCA9E");
+static NimBLEUUID CHAR_UUID_TIME  ("6E400007-B5A3-F393-E0A9-E50E24DCCA9E"); // write HH:MM
+
+static NimBLEServer*         bleServer  = nullptr;
+static NimBLECharacteristic* txChar     = nullptr;
+static NimBLECharacteristic* rxChar     = nullptr;
+static NimBLECharacteristic* nameChar   = nullptr;
+static NimBLECharacteristic* songChar   = nullptr;
+static NimBLECharacteristic* artistChar = nullptr;
+static NimBLECharacteristic* timeChar   = nullptr;
+static volatile bool bleConnected = false;
+
+static portMUX_TYPE rxMux = portMUX_INITIALIZER_UNLOCKED;
+static volatile bool rxPending = false;
+static String rxMessage;
+
+// ---- Deferred parameter updates: callbacks store; loop() applies ----
+static volatile bool bleNamePending   = false;
+static volatile bool bleSongPending   = false;
+static volatile bool bleArtistPending = false;
+static volatile bool bleTimePending   = false;
+
+static String pendingName;
+static String pendingSong;
+static String pendingArtist;
+static String pendingTime;
+
+/* ===================== Parameterized watch content ===================== */
+static String displayName = "Commubu";
+static String currentSongTitle = "Let It Happen";
+static String currentArtist    = "Tame Impala";
+
+static String currentTrackLine() {
+  if (currentSongTitle.length() == 0 && currentArtist.length() == 0) return "";
+  if (currentSongTitle.length() == 0) return currentArtist;
+  if (currentArtist.length() == 0) return currentSongTitle;
+  return currentSongTitle + " - " + currentArtist;
+}
+
+/* ===================== Time state ===================== */
+// Time is set over BLE via CHAR_UUID_TIME in "HH:MM" format.
+// After sync, the device advances time locally every minute.
+static bool timeValid = false;
+static int currentHour = 0;
+static int currentMinute = 0;
+static uint32_t lastMinuteTickMs = 0;
+
+static String currentTimeString() {
+  if (!timeValid) return "--:--";
+  char buf[6];
+  snprintf(buf, sizeof(buf), "%02d:%02d", currentHour, currentMinute);
+  return String(buf);
+}
+
+static bool parseTimeString(const String& s, int& hh, int& mm) {
+  if (s.length() != 5 || s.charAt(2) != ':') return false;
+  if (!isDigit(s.charAt(0)) || !isDigit(s.charAt(1)) ||
+      !isDigit(s.charAt(3)) || !isDigit(s.charAt(4))) return false;
+
+  hh = (s.charAt(0) - '0') * 10 + (s.charAt(1) - '0');
+  mm = (s.charAt(3) - '0') * 10 + (s.charAt(4) - '0');
+
+  return (hh >= 0 && hh < 24 && mm >= 0 && mm < 60);
+}
+
+static void setCurrentTimeFromString(const String& s) {
+  int hh = 0, mm = 0;
+  if (!parseTimeString(s, hh, mm)) return;
+
+  currentHour = hh;
+  currentMinute = mm;
+  timeValid = true;
+  lastMinuteTickMs = millis();
+}
+
+/* ===================== UI cache for efficient redraws ===================== */
+static int lastDrawnSteps = -1;
+static int lastDrawnBPM = -999;
+static int lastDrawnADC = -99999;
+static String lastDrawnTrack = "";
+static String lastDrawnName = "";
+static String lastDrawnTime = "";
+static String lastWatchRx = "";
+static int16_t musicScrollX = 0;
+static uint32_t lastMusicScrollMs = 0;
+
+static void invalidateWatchCache() {
+  lastDrawnSteps = -1;
+  lastDrawnBPM = -999;
+  lastDrawnADC = -99999;
+  lastDrawnTrack = "";
+  lastDrawnName = "";
+  lastDrawnTime = "";
+  lastWatchRx = "";
+  musicScrollX = 0;
+}
+static NimBLECharacteristic* txChar     = nullptr;
+static NimBLECharacteristic* rxChar     = nullptr;
+static NimBLECharacteristic* nameChar   = nullptr;
+static NimBLECharacteristic* songChar   = nullptr;
+static NimBLECharacteristic* artistChar = nullptr;
+static NimBLECharacteristic* timeChar   = nullptr;
 
 static NimBLEServer*         bleServer = nullptr;
 static NimBLECharacteristic* txChar    = nullptr;
 static NimBLECharacteristic* rxChar    = nullptr;
 static volatile bool bleConnected = false;
+
+static portMUX_TYPE rxMux = portMUX_INITIALIZER_UNLOCKED;
+static volatile bool rxPending = false;
+static String rxMessage;
+
+// ---- Deferred parameter updates: callbacks store; loop() applies ----
+static volatile bool bleNamePending   = false;
+static volatile bool bleSongPending   = false;
+static volatile bool bleArtistPending = false;
+static volatile bool bleTimePending   = false;
+
+static String pendingName;
+static String pendingSong;
+static String pendingArtist;
+static String pendingTime;
+/* ===================== Parameterized watch content ===================== */
+static String displayName = "Commubu";
+static String currentSongTitle = "Let It Happen";
+static String currentArtist    = "Tame Impala";
+
+static String currentTrackLine() {
+  if (currentSongTitle.length() == 0 && currentArtist.length() == 0) return "";
+  if (currentSongTitle.length() == 0) return currentArtist;
+  if (currentArtist.length() == 0) return currentSongTitle;
+  return currentSongTitle + " - " + currentArtist;
+}
+
+/* ===================== Time state ===================== */
+// Time is set over BLE via CHAR_UUID_TIME in "HH:MM" format.
+// After sync, the device advances time locally every minute.
+static bool timeValid = false;
+static int currentHour = 0;
+static int currentMinute = 0;
+static uint32_t lastMinuteTickMs = 0;
+
+static String currentTimeString() {
+  if (!timeValid) return "--:--";
+  char buf[6];
+  snprintf(buf, sizeof(buf), "%02d:%02d", currentHour, currentMinute);
+  return String(buf);
+}
+
+static bool parseTimeString(const String& s, int& hh, int& mm) {
+  if (s.length() != 5 || s.charAt(2) != ':') return false;
+  if (!isDigit(s.charAt(0)) || !isDigit(s.charAt(1)) ||
+      !isDigit(s.charAt(3)) || !isDigit(s.charAt(4))) return false;
+
+  hh = (s.charAt(0) - '0') * 10 + (s.charAt(1) - '0');
+  mm = (s.charAt(3) - '0') * 10 + (s.charAt(4) - '0');
+
+  return (hh >= 0 && hh < 24 && mm >= 0 && mm < 60);
+}
+
+static void setCurrentTimeFromString(const String& s) {
+  int hh = 0, mm = 0;
+  if (!parseTimeString(s, hh, mm)) return;
+
+  currentHour = hh;
+  currentMinute = mm;
+  timeValid = true;
+  lastMinuteTickMs = millis();
+}
+/* ===================== Music bar ===================== */
+static const uint8_t musicTextSize = 2;
+static const int16_t musicBarTopY = 288;
+static const int16_t musicBarTextY = 293;
+static const int16_t musicBarHeight = 32;
+static const int16_t musicTextX = 6;
+static const int16_t musicTextW = 240 - musicTextX - 4;
+
+static int16_t musicScrollX = 0;
+static uint32_t lastMusicScrollMs = 0;
+static const uint32_t MUSIC_SCROLL_INTERVAL_MS = 140;
+static const int16_t MUSIC_SCROLL_STEP = 2;
+static const int16_t MUSIC_GAP_PX = 20;
 
 static portMUX_TYPE rxMux = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool rxPending = false;
@@ -239,34 +422,88 @@ void printRightFixedBox(const char *txt, int16_t boxLeft, int16_t boxWidth,
 }
 
 /* ===================== BLE callbacks ===================== */
+
+// BLE Callbacks for parameter characteristics
 class RxCallbacks : public NimBLECharacteristicCallbacks {
 public:
-  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) {
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
     (void)connInfo;
-
     std::string v = c->getValue();
     if (v.empty()) return;
-
     String msg;
     msg.reserve(v.size());
     for (size_t i = 0; i < v.size(); i++) msg += (char)v[i];
-
     portENTER_CRITICAL(&rxMux);
     rxMessage = msg;
     rxPending = true;
     portEXIT_CRITICAL(&rxMux);
   }
 };
-
+class NameCallbacks : public NimBLECharacteristicCallbacks {
+public:
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
+    (void)c; (void)connInfo;
+    std::string v = c->getValue();
+    if (v.empty()) return;
+    String s = String(v.c_str());
+    s.trim();
+    if (s.length() == 0) return;
+    portENTER_CRITICAL(&rxMux);
+    pendingName = s;
+    bleNamePending = true;
+    portEXIT_CRITICAL(&rxMux);
+  }
+};
+class SongCallbacks : public NimBLECharacteristicCallbacks {
+public:
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
+    (void)c; (void)connInfo;
+    std::string v = c->getValue();
+    if (v.empty()) return;
+    String s = String(v.c_str());
+    s.trim();
+    portENTER_CRITICAL(&rxMux);
+    pendingSong = s;
+    bleSongPending = true;
+    portEXIT_CRITICAL(&rxMux);
+  }
+};
+class ArtistCallbacks : public NimBLECharacteristicCallbacks {
+public:
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
+    (void)c; (void)connInfo;
+    std::string v = c->getValue();
+    if (v.empty()) return;
+    String s = String(v.c_str());
+    s.trim();
+    portENTER_CRITICAL(&rxMux);
+    pendingArtist = s;
+    bleArtistPending = true;
+    portEXIT_CRITICAL(&rxMux);
+  }
+};
+class TimeCallbacks : public NimBLECharacteristicCallbacks {
+public:
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
+    (void)c; (void)connInfo;
+    std::string v = c->getValue();
+    if (v.empty()) return;
+    String s = String(v.c_str());
+    s.trim();
+    portENTER_CRITICAL(&rxMux);
+    pendingTime = s;
+    bleTimePending = true;
+    portEXIT_CRITICAL(&rxMux);
+  }
+};
 class ServerCallbacks : public NimBLEServerCallbacks {
 public:
-  void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) {
+  void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
     (void)pServer; (void)connInfo;
     bleConnected = true;
     Serial.println("BLE: connected");
   }
-
-  void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) {
+  void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
     (void)pServer; (void)connInfo; (void)reason;
     bleConnected = false;
     Serial.println("BLE: disconnected");
@@ -295,6 +532,34 @@ static void initBLE() {
   );
   rxChar->setCallbacks(new RxCallbacks());
 
+  nameChar = svc->createCharacteristic(
+    CHAR_UUID_NAME,
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+  );
+  nameChar->setValue(displayName.c_str());
+  nameChar->setCallbacks(new NameCallbacks());
+
+  songChar = svc->createCharacteristic(
+    CHAR_UUID_SONG,
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+  );
+  songChar->setValue(currentSongTitle.c_str());
+  songChar->setCallbacks(new SongCallbacks());
+
+  artistChar = svc->createCharacteristic(
+    CHAR_UUID_ARTIST,
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+  );
+  artistChar->setValue(currentArtist.c_str());
+  artistChar->setCallbacks(new ArtistCallbacks());
+
+  timeChar = svc->createCharacteristic(
+    CHAR_UUID_TIME,
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+  );
+  timeChar->setValue(currentTimeString().c_str());
+  timeChar->setCallbacks(new TimeCallbacks());
+
   svc->start();
 
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
@@ -310,6 +575,84 @@ static void initBLE() {
   adv->start();
 
   Serial.println("BLE: advertising");
+}
+/* ===================== Pending BLE params ===================== */
+static void applyPendingBleParams() {
+  bool doName = false, doSong = false, doArtist = false, doTime = false;
+  String newName, newSong, newArtist, newTime;
+
+  portENTER_CRITICAL(&rxMux);
+  if (bleNamePending) {
+    newName = pendingName;
+    bleNamePending = false;
+    doName = true;
+  }
+  if (bleSongPending) {
+    newSong = pendingSong;
+    bleSongPending = false;
+    doSong = true;
+  }
+  if (bleArtistPending) {
+    newArtist = pendingArtist;
+    bleArtistPending = false;
+    doArtist = true;
+  }
+  if (bleTimePending) {
+    newTime = pendingTime;
+    bleTimePending = false;
+    doTime = true;
+  }
+  portEXIT_CRITICAL(&rxMux);
+
+  if (doName) {
+    displayName = newName;
+    if (nameChar) nameChar->setValue(displayName.c_str());
+    // Optionally update UI here
+    bleSend("Name=" + displayName);
+  }
+
+  if (doSong) {
+    currentSongTitle = newSong;
+    if (songChar) songChar->setValue(currentSongTitle.c_str());
+    // Optionally update UI here
+    bleSend("Song=" + currentSongTitle);
+  }
+
+  if (doArtist) {
+    currentArtist = newArtist;
+    if (artistChar) artistChar->setValue(currentArtist.c_str());
+    // Optionally update UI here
+    bleSend("Artist=" + currentArtist);
+  }
+
+  if (doTime) {
+    int hh = 0, mm = 0;
+    if (parseTimeString(newTime, hh, mm)) {
+      setCurrentTimeFromString(newTime);
+      if (timeChar) timeChar->setValue(currentTimeString().c_str());
+      // Optionally update UI here
+      bleSend("Time=" + currentTimeString());
+    } else {
+      bleSend("Time write invalid, use HH:MM");
+    }
+  }
+}
+/* ===================== Time tick ===================== */
+static void updateLocalClock() {
+  if (!timeValid) return;
+  uint32_t nowMs = millis();
+  while ((uint32_t)(nowMs - lastMinuteTickMs) >= 60000UL) {
+    lastMinuteTickMs += 60000UL;
+    currentMinute++;
+    if (currentMinute >= 60) {
+      currentMinute = 0;
+      currentHour = (currentHour + 1) % 24;
+    }
+    if (timeChar) {
+      timeChar->setValue(currentTimeString().c_str());
+    }
+    // Optionally update UI here
+  }
 }
 
 /* ===================== Debounced button ===================== */
@@ -908,6 +1251,8 @@ void loop() {
   static const char* causeStr = wakeCauseToStr(cachedCause);
 
   updateHeartRate();
+  updateLocalClock();
+  applyPendingBleParams();
 
   if (rxPending) {
     String msgCopy;
@@ -930,7 +1275,6 @@ void loop() {
   b3.update();
 
   handleModeToggleChord(causeStr);
-
 
   // Button 1: test.h animation
   if (b1.fell()) {
