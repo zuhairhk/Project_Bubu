@@ -1,12 +1,31 @@
-asgiref==3.11.0
-certifi==2026.1.4
-charset-normalizer==3.4.4
-gtfs-realtime-bindings==2.0.0
-idna==3.11
-protobuf==6.33.4
-python-dotenv==1.2.1
-requests==2.32.5
-sqlparse==0.5.5
-urllib3==2.6.3
+# ── Web framework ─────────────────────────────────────────────
 fastapi
-uvicorn
+uvicorn[standard]
+pydantic>=2.7
+python-multipart>=0.0.9
+
+# ── Environment ───────────────────────────────────────────────
+python-dotenv>=1.0
+
+# ── HTTP / networking ─────────────────────────────────────────
+requests>=2.32
+urllib3>=2.6
+certifi>=2026.1
+charset-normalizer>=3.4
+idna>=3.11
+
+# ── GTFS Realtime (transit alerts) ────────────────────────────
+gtfs-realtime-bindings>=2.0.0
+protobuf>=6.33
+
+# ── ML stack ──────────────────────────────────────────────────
+scikit-learn>=1.4
+numpy>=1.26
+pandas>=2.2
+joblib>=1.4
+
+# ── Database (lightweight JSON store, zero setup) ─────────────
+tinydb>=4.8
+
+# ── Utilities ─────────────────────────────────────────────────
+python-dateutil>=2.9
