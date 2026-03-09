@@ -1,19 +1,37 @@
 {
-  "trained_at": "2026-03-09T20:10:34.976684",
-  "total_samples": 241,
-  "real_samples": 1,
-  "synthetic_samples": 240,
-  "n_stressed": 121,
-  "n_not_stressed": 120,
-  "cv_f1_mean": 1.0,
-  "cv_f1_std": 0.0,
+  "trained_at": "2026-03-09T21:35:11.424478",
+  "total_samples": 720,
+  "real_samples": 120,
+  "synthetic_samples": 600,
+  "mood_counts": {
+    "happy": 120,
+    "neutral": 120,
+    "stressed": 120,
+    "angry": 120,
+    "sad": 120,
+    "sleepy": 120
+  },
+  "cv_f1_weighted_mean": 0.9917,
+  "cv_f1_weighted_std": 0.0068,
   "features": [
     "heart_rate",
     "hr_normalized",
     "steps_last_minute",
     "location_variance",
     "hour_of_day",
-    "is_rush_hour"
+    "is_rush_hour",
+    "spotify_energy",
+    "spotify_valence",
+    "spotify_tempo_norm",
+    "has_spotify"
   ],
-  "model_path": "/home/zu/Code/Project_Bubu/backend/ml/models/stress_classifier.pkl"
+  "moods_supported": [
+    "happy",
+    "neutral",
+    "stressed",
+    "angry",
+    "sad",
+    "sleepy"
+  ],
+  "model_path": "/home/zu/Code/Project_Bubu/backend/ml/models/mood_classifier.pkl"
 }

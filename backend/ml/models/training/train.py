@@ -1,17 +1,5 @@
 """
-ML training pipeline — stress classifier.
-
-Run manually to retrain from the command line:
-    cd backend
-    python -m ml.training.train
-
-Or call train_model() from the /api/ml/train endpoint.
-
-Strategy:
-  - Uses a Random Forest with StandardScaler — fast, interpretable, handles small datasets well.
-  - Synthetic seed data ensures the model works before any real users contribute labels.
-  - Real user data is appended last; when dataset grows, synthetic data becomes less influential.
-  - class_weight="balanced" prevents the model from always predicting the majority class.
+ML training pipeline — 6-mood classifier with Spotify context.
 """
 import os
 import json
@@ -23,118 +11,168 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 
-from ml.features import build_feature_matrix, FEATURE_NAMES
+from ml.features import build_feature_matrix, FEATURE_NAMES, INT_TO_MOOD
 from db.store import get_labeled_snapshots
 from core.config import MODEL_DIR
 
-MODEL_FILE    = os.path.join(MODEL_DIR, "stress_classifier.pkl")
+MODEL_FILE    = os.path.join(MODEL_DIR, "mood_classifier.pkl")
 METADATA_FILE = os.path.join(MODEL_DIR, "model_metadata.json")
 
 
-# ──────────────────────────────────────────────────────────────
-# Synthetic seed data
-# ──────────────────────────────────────────────────────────────
-
 def _make_synthetic_data() -> list[dict]:
     """
-    240 synthetic samples based on physiological research:
-      - Stressed:     HR 95–140, low steps, higher location variance, rush hour
-      - Not stressed: HR 58–85, moderate steps, low variance, off-peak
+    600 synthetic samples covering all 6 moods with realistic
+    biometric + Spotify audio feature combinations.
+
+    Mood profiles:
+      happy    — moderate HR, active steps, high valence, high energy music
+      neutral  — resting HR, low steps, mid valence, mid energy music
+      stressed — elevated HR, rush hour, low/high steps, intense low-valence music
+      angry    — very high HR, high steps, very low valence, very high energy music
+      sad      — low HR, few steps, low valence, low energy music
+      sleepy   — very low HR, almost no steps, low energy slow music
     """
     rng = np.random.default_rng(seed=42)
     samples = []
 
-    # STRESSED — sitting on delayed train, heart racing
-    for _ in range(60):
-        samples.append({
-            "heart_rate":        int(rng.integers(95, 125)),
-            "steps_last_minute": int(rng.integers(0, 20)),
-            "location_variance": float(rng.uniform(0.0001, 0.0008)),
-            "timestamp":         datetime(2024, 3, 1, int(rng.integers(7, 10)), 0),
-            "label":             "stressed",
-        })
+    def ts(hour_min, hour_max, day=1):
+        h = int(rng.integers(hour_min, hour_max))
+        m = int(rng.integers(0, 59))
+        return datetime(2026, 3, day, h, m, 0)
 
-    # STRESSED — rushing to catch train
-    for _ in range(60):
+    # ── HAPPY (100 samples) ──────────────────────────────────────
+    for i in range(100):
         samples.append({
-            "heart_rate":        int(rng.integers(105, 145)),
-            "steps_last_minute": int(rng.integers(90, 150)),
-            "location_variance": float(rng.uniform(0.0005, 0.002)),
-            "timestamp":         datetime(2024, 3, 1, int(rng.integers(7, 9)), 0),
-            "label":             "stressed",
-        })
-
-    # NOT STRESSED — comfortable seated commute
-    for _ in range(80):
-        samples.append({
-            "heart_rate":        int(rng.integers(58, 82)),
-            "steps_last_minute": int(rng.integers(0, 15)),
-            "location_variance": float(rng.uniform(0.0, 0.00004)),
-            "timestamp":         datetime(2024, 3, 1, int(rng.integers(8, 18)), 0),
-            "label":             "not_stressed",
-        })
-
-    # NOT STRESSED — walking at normal pace, off-peak
-    for _ in range(40):
-        samples.append({
-            "heart_rate":        int(rng.integers(65, 90)),
-            "steps_last_minute": int(rng.integers(30, 75)),
+            "heart_rate":        int(rng.integers(72, 95)),
+            "steps_last_minute": int(rng.integers(30, 70)),
             "location_variance": float(rng.uniform(0.00001, 0.00008)),
-            "timestamp":         datetime(2024, 3, 1, int(rng.integers(10, 20)), 0),
-            "label":             "not_stressed",
+            "timestamp":         ts(9, 18, i % 9 + 1),
+            "spotify": {
+                "energy":       float(rng.uniform(0.65, 0.95)),
+                "valence":      float(rng.uniform(0.70, 1.00)),
+                "tempo":        float(rng.uniform(110, 145)),
+                "danceability": float(rng.uniform(0.60, 0.90)),
+            },
+            "label": "happy",
+        })
+
+    # ── NEUTRAL (100 samples) ────────────────────────────────────
+    for i in range(100):
+        samples.append({
+            "heart_rate":        int(rng.integers(62, 80)),
+            "steps_last_minute": int(rng.integers(5, 30)),
+            "location_variance": float(rng.uniform(0.000001, 0.00003)),
+            "timestamp":         ts(10, 19, i % 9 + 1),
+            "spotify": {
+                "energy":       float(rng.uniform(0.35, 0.60)),
+                "valence":      float(rng.uniform(0.40, 0.65)),
+                "tempo":        float(rng.uniform(90, 125)),
+                "danceability": float(rng.uniform(0.40, 0.65)),
+            },
+            "label": "neutral",
+        })
+
+    # ── STRESSED (100 samples) ───────────────────────────────────
+    for i in range(100):
+        rushing = i % 2 == 0
+        samples.append({
+            "heart_rate":        int(rng.integers(100, 145) if rushing else rng.integers(90, 120)),
+            "steps_last_minute": int(rng.integers(80, 150) if rushing else rng.integers(0, 15)),
+            "location_variance": float(rng.uniform(0.0005, 0.002) if rushing else rng.uniform(0.0002, 0.0009)),
+            "timestamp":         ts(7, 9, i % 9 + 1),
+            "spotify": {
+                "energy":       float(rng.uniform(0.70, 1.00)),
+                "valence":      float(rng.uniform(0.10, 0.40)),
+                "tempo":        float(rng.uniform(140, 200)),
+                "danceability": float(rng.uniform(0.30, 0.60)),
+            },
+            "label": "stressed",
+        })
+
+    # ── ANGRY (100 samples) ──────────────────────────────────────
+    for i in range(100):
+        samples.append({
+            "heart_rate":        int(rng.integers(110, 155)),
+            "steps_last_minute": int(rng.integers(50, 130)),
+            "location_variance": float(rng.uniform(0.0003, 0.0015)),
+            "timestamp":         ts(7, 20, i % 9 + 1),
+            "spotify": {
+                "energy":       float(rng.uniform(0.85, 1.00)),
+                "valence":      float(rng.uniform(0.00, 0.20)),
+                "tempo":        float(rng.uniform(150, 200)),
+                "danceability": float(rng.uniform(0.20, 0.50)),
+            },
+            "label": "angry",
+        })
+
+    # ── SAD (100 samples) ────────────────────────────────────────
+    for i in range(100):
+        samples.append({
+            "heart_rate":        int(rng.integers(55, 75)),
+            "steps_last_minute": int(rng.integers(0, 20)),
+            "location_variance": float(rng.uniform(0.000001, 0.00005)),
+            "timestamp":         ts(8, 22, i % 9 + 1),
+            "spotify": {
+                "energy":       float(rng.uniform(0.10, 0.40)),
+                "valence":      float(rng.uniform(0.00, 0.30)),
+                "tempo":        float(rng.uniform(60, 100)),
+                "danceability": float(rng.uniform(0.10, 0.40)),
+            },
+            "label": "sad",
+        })
+
+    # ── SLEEPY (100 samples) ─────────────────────────────────────
+    for i in range(100):
+        samples.append({
+            "heart_rate":        int(rng.integers(48, 65)),
+            "steps_last_minute": int(rng.integers(0, 8)),
+            "location_variance": float(rng.uniform(0.0, 0.000005)),
+            "timestamp":         ts(6, 10, i % 9 + 1),   # early morning commute
+            "spotify": {
+                "energy":       float(rng.uniform(0.05, 0.30)),
+                "valence":      float(rng.uniform(0.20, 0.50)),
+                "tempo":        float(rng.uniform(60, 90)),
+                "danceability": float(rng.uniform(0.10, 0.35)),
+            },
+            "label": "sleepy",
         })
 
     return samples
 
 
-# ──────────────────────────────────────────────────────────────
-# Training
-# ──────────────────────────────────────────────────────────────
-
-def train_model(min_samples: int = 20) -> dict:
-    """
-    Train the stress classifier and persist it.
-
-    Steps:
-      1. Load labeled snapshots from DB + synthetic seed data
-      2. Build feature matrix
-      3. Stratified k-fold cross-validation (reports F1)
-      4. Final fit on all data
-      5. Save pipeline (.pkl) and metadata (.json)
-
-    Raises ValueError if total samples < min_samples.
-    Returns metadata dict.
-    """
+def train_model(min_samples: int = 10) -> dict:
+    """Train the 6-mood classifier and save to disk."""
     real_data      = get_labeled_snapshots()
     synthetic_data = _make_synthetic_data()
-    all_data       = synthetic_data + real_data  # real data at the end
+    all_data       = synthetic_data + real_data
 
     X, y = build_feature_matrix(all_data)
 
     if len(X) < min_samples:
-        raise ValueError(
-            f"Need at least {min_samples} labeled samples, got {len(X)}"
-        )
+        raise ValueError(f"Need at least {min_samples} samples, got {len(X)}")
 
-    n_stressed     = int(y.sum())
-    n_not_stressed = int(len(y) - n_stressed)
+    # Count per mood
+    mood_counts = {}
+    for label_int in y:
+        mood = INT_TO_MOOD[int(label_int)]
+        mood_counts[mood] = mood_counts.get(mood, 0) + 1
 
-    # Pipeline: scale features → Random Forest
     pipeline = Pipeline([
         ("scaler", StandardScaler()),
         ("clf", RandomForestClassifier(
-            n_estimators=200,
-            max_depth=6,
-            min_samples_leaf=3,
+            n_estimators=300,
+            max_depth=8,
+            min_samples_leaf=2,
             class_weight="balanced",
             random_state=42,
         )),
     ])
 
-    # Cross-validate — use StratifiedKFold to preserve class balance per fold
-    n_splits  = min(5, n_stressed, n_not_stressed)  # can't have more folds than minority class
-    cv        = StratifiedKFold(n_splits=max(2, n_splits), shuffle=True, random_state=42)
-    cv_scores = cross_val_score(pipeline, X, y, cv=cv, scoring="f1")
+    # Need at least 2 samples per class for stratified CV
+    min_class_count = min(mood_counts.values()) if mood_counts else 1
+    n_splits = max(2, min(5, min_class_count))
+    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+    cv_scores = cross_val_score(pipeline, X, y, cv=cv, scoring="f1_weighted")
 
     pipeline.fit(X, y)
     joblib.dump(pipeline, MODEL_FILE)
@@ -144,32 +182,24 @@ def train_model(min_samples: int = 20) -> dict:
         "total_samples":     int(len(X)),
         "real_samples":      len(real_data),
         "synthetic_samples": len(synthetic_data),
-        "n_stressed":        n_stressed,
-        "n_not_stressed":    n_not_stressed,
-        "cv_f1_mean":        round(float(cv_scores.mean()), 4),
-        "cv_f1_std":         round(float(cv_scores.std()), 4),
+        "mood_counts":       mood_counts,
+        "cv_f1_weighted_mean": round(float(cv_scores.mean()), 4),
+        "cv_f1_weighted_std":  round(float(cv_scores.std()), 4),
         "features":          FEATURE_NAMES,
+        "moods_supported":   list(INT_TO_MOOD.values()),
         "model_path":        MODEL_FILE,
     }
 
     with open(METADATA_FILE, "w") as f:
         json.dump(metadata, f, indent=2)
 
-    print(
-        f"[ML] Training complete — "
-        f"{len(X)} samples | "
-        f"F1 = {metadata['cv_f1_mean']:.3f} ± {metadata['cv_f1_std']:.3f}"
-    )
+    print(f"[ML] Trained 6-mood classifier — {len(X)} samples | F1={metadata['cv_f1_weighted_mean']:.3f}")
     return metadata
 
 
 def load_model():
-    """
-    Load the trained pipeline from disk.
-    Auto-trains on synthetic data if no saved model exists yet.
-    """
     if not os.path.exists(MODEL_FILE):
-        print("[ML] No model found — running initial training with synthetic seed data...")
+        print("[ML] No model — training on synthetic data...")
         train_model(min_samples=1)
     return joblib.load(MODEL_FILE)
 
