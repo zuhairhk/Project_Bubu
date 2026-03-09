@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { MotiView } from 'moti';
+import * as AuthSession from 'expo-auth-session';
 
 import { View, Text, SubText, Card, useThemeColors } from '@/components/Themed';
 import { useSpotifyAuth } from '@/lib/spotifyAuth';
@@ -70,7 +71,7 @@ function TrackRow({ track, index }: { track: Track; index: number }) {
 
 export default function PlaylistScreen() {
   const insets = useSafeAreaInsets();
-  const [request, response, promptAsync] = useSpotifyAuth();
+  const [request, response, promptAsync, getToken] = useSpotifyAuth();
   const [token,   setToken]   = useState<string | null>(null);
   const [artists, setArtists] = useState<Artist[]>([]);
   const [tracks,  setTracks]  = useState<Track[]>([]);
@@ -79,11 +80,26 @@ export default function PlaylistScreen() {
   const colors = useThemeColors();
 
   useEffect(() => {
-    if (response?.type === 'success') {
-      const accessToken = response.params.access_token;
-      setToken(accessToken);
-      loadData(accessToken);
+    async function handleAuth() {
+      if (response?.type === 'success') {
+        setLoading(true);
+        try {
+          const tokenResult = await getToken();
+          if (tokenResult && tokenResult.access_token) {
+            setToken(tokenResult.access_token);
+            await loadData(tokenResult.access_token);
+          } else {
+            console.error('Failed to get access token from Spotify');
+          }
+        } catch (e) {
+          console.error('Spotify token exchange error:', e);
+        } finally {
+          setLoading(false);
+        }
+      }
     }
+    handleAuth();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [response]);
 
   async function loadData(tk: string) {
@@ -98,6 +114,8 @@ export default function PlaylistScreen() {
       setLoading(false);
     }
   }
+
+  console.log(AuthSession.makeRedirectUri());
 
   return (
     <View style={[styles.root, { paddingTop: insets.top + 12 }]}>
