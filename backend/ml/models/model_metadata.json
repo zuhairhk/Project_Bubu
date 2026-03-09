@@ -1,0 +1,19 @@
+{
+  "trained_at": "2026-03-09T20:10:34.976684",
+  "total_samples": 241,
+  "real_samples": 1,
+  "synthetic_samples": 240,
+  "n_stressed": 121,
+  "n_not_stressed": 120,
+  "cv_f1_mean": 1.0,
+  "cv_f1_std": 0.0,
+  "features": [
+    "heart_rate",
+    "hr_normalized",
+    "steps_last_minute",
+    "location_variance",
+    "hour_of_day",
+    "is_rush_hour"
+  ],
+  "model_path": "/home/zu/Code/Project_Bubu/backend/ml/models/stress_classifier.pkl"
+}

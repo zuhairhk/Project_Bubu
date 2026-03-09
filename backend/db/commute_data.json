@@ -1,0 +1,14 @@
+{
+  "health_snapshots": {
+    "1": {
+      "user_id": "user_abc123",
+      "heart_rate": 108,
+      "steps_last_minute": 12,
+      "latitude": null,
+      "longitude": null,
+      "location_variance": 0.00045,
+      "timestamp": "2026-03-09T19:55:54.543391",
+      "label": "stressed"
+    }
+  }
+}
