@@ -77,7 +77,7 @@ function BleStatusBadge() {
 // ─── Main screen ──────────────────────────────────────────────────────────────
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { status, sendMood, data } = useBle();
+  const { status, sendMood, data, deviceCustomName } = useBle();
   const [lastMood, setLastMood] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
@@ -104,7 +104,7 @@ export default function HomeScreen() {
     }
   }, [sendMood, data]);
 
-  const title = 'Welcome back!';
+  const title = deviceCustomName ? `Welcome, ${deviceCustomName}!` : 'Welcome back!';
 
   return (
     <View style={[styles.root, { paddingTop: insets.top + 12 }]}>
@@ -117,6 +117,17 @@ export default function HomeScreen() {
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
+        {/* Device name from BLE */}
+        {deviceCustomName && (
+          <MotiText
+            style={[styles.moodPrompt, { fontSize: 18, color: '#334155', marginBottom: 0 }]}
+            from={{ opacity: 0, translateY: -8 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            transition={{ type: 'timing', duration: 500, delay: 100 }}
+          >
+            Device: {deviceCustomName}
+          </MotiText>
+        )}
         {/* Wavy title */}
         <View style={styles.titleRow}>
           {title.split('').map((char, i) => (

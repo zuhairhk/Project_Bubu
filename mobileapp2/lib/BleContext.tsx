@@ -14,6 +14,7 @@ import { Buffer } from 'buffer';
 const SERVICE_UUID  = '6E400001-B5A3-F393-E0A9-E50E24DCCA9E';
 const RX_CHAR_UUID  = '6E400002-B5A3-F393-E0A9-E50E24DCCA9E'; // Phone → ESP32
 const TX_CHAR_UUID  = '6E400003-B5A3-F393-E0A9-E50E24DCCA9E'; // ESP32 → Phone
+const NAME_CHAR_UUID = '6E400004-B5A3-F393-E0A9-E50E24DCCA9E'; // Custom name
 
 const DEVICE_NAME   = 'Commubu';
 const SCAN_TIMEOUT  = 10_000; // ms
@@ -31,6 +32,7 @@ export type ConnectionStatus = 'disconnected' | 'scanning' | 'connecting' | 'con
 type BleContextType = {
   status:     ConnectionStatus;
   deviceName: string | null;
+  deviceCustomName: string | null;
   error:      string | null;
   data:       BleData;
   connect:    () => Promise<void>;
@@ -43,6 +45,7 @@ type BleContextType = {
 const BleContext = createContext<BleContextType>({
   status:     'disconnected',
   deviceName: null,
+  deviceCustomName: null,
   error:      null,
   data:       { heartRate: null, steps: null, calories: null, distance: null },
   connect:    async () => {},
@@ -64,6 +67,7 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
 
   const [status,     setStatus]     = useState<ConnectionStatus>('disconnected');
   const [deviceName, setDeviceName] = useState<string | null>(null);
+  const [deviceCustomName, setDeviceCustomName] = useState<string | null>(null);
   const [error,      setError]      = useState<string | null>(null);
   const [data,       setData]       = useState<BleData>({
     heartRate: null, steps: null, calories: null, distance: null,
@@ -156,6 +160,20 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         setDeviceName(null);
       });
 
+      // 5. Read custom name characteristic
+      let customName: string | null = null;
+      try {
+        const char = await connected.readCharacteristicForService(
+          SERVICE_UUID,
+          NAME_CHAR_UUID
+        );
+        if (char?.value) {
+          customName = Buffer.from(char.value, 'base64').toString('utf8').trim();
+        }
+      } catch (e) {
+        // ignore, fallback to default
+      }
+      setDeviceCustomName(customName);
       setStatus('connected');
       setDeviceName(connected.name ?? DEVICE_NAME);
     } catch (e: any) {
@@ -178,6 +196,7 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     }
     setStatus('disconnected');
     setDeviceName(null);
+    setDeviceCustomName(null);
   }, []);
 
   // ── Send Mood ────────────────────────────────────────────────────────────
@@ -203,7 +222,7 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <BleContext.Provider
-      value={{ status, deviceName, error, data, connect, disconnect, sendMood, clearError }}
+      value={{ status, deviceName, deviceCustomName, error, data, connect, disconnect, sendMood, clearError }}
     >
       {children}
     </BleContext.Provider>
