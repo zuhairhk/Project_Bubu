@@ -6,7 +6,8 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
 import { ErrorBoundary } from "expo-router";
-
+import * as WebBrowser from 'expo-web-browser';
+WebBrowser.maybeCompleteAuthSession(); // For handling OAuth redirects in the future
 import { useColorScheme } from '@/components/useColorScheme';
 import FloatingMenu from '@/components/FloatingMenu'; // 👈 import the radial menu
 
@@ -26,6 +27,7 @@ SplashScreen.preventAutoHideAsync();
 export default function RootLayout() {
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
+    '429Font': require('../assets/fonts/429-font.otf'), // <-- Load your custom font
     ...FontAwesome.font,
   });
 

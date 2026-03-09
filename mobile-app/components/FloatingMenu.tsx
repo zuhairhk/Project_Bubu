@@ -9,6 +9,8 @@ import Animated, {
   withDelay,
 } from "react-native-reanimated";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
+
 
 const { width } = Dimensions.get("window");
 
@@ -67,14 +69,28 @@ export default function FloatingMenu() {
         return (
           <Animated.View key={index} style={[styles.menuItem, animatedStyle]}>
             <Pressable
-              onPress={() => {
-                toggleMenu();
-                router.push(item.route);
-              }}
-              style={styles.secondaryButton}
-            >
-              <Ionicons name={item.icon as any} size={22} color="#fff" />
-            </Pressable>
+  onPress={() => {
+    toggleMenu();
+    router.push(item.route);
+  }}
+>
+  {({ pressed }) => (
+    <LinearGradient
+      colors={
+        pressed
+          ? ['#E6F2FA', '#D8EBF7', '#BCD6E6']
+          : ['#F8FCFF', '#E6F2FA', '#C9E0EE']
+      }
+      style={[
+        styles.secondaryButton,
+        pressed && styles.pressed,
+      ]}
+    >
+      <Ionicons name={item.icon as any} size={22} color="#3A5F7D" />
+    </LinearGradient>
+  )}
+</Pressable>
+
           </Animated.View>
         );
       })}
@@ -88,9 +104,24 @@ export default function FloatingMenu() {
           })),
         ]}
       >
-        <Pressable onPress={toggleMenu} style={styles.fabButton}>
-          <Ionicons name="add" size={30} color="#fff" />
-        </Pressable>
+        <Pressable onPress={toggleMenu}>
+  {({ pressed }) => (
+    <LinearGradient
+      colors={
+        pressed
+          ? ['#E6F2FA', '#D8EBF7', '#BCD6E6']
+          : ['#F8FCFF', '#E6F2FA', '#C9E0EE']
+      }
+      style={[
+        styles.fabButton,
+        pressed && styles.pressed,
+      ]}
+    >
+      <Ionicons name="add" size={30} color="#3A5F7D" />
+    </LinearGradient>
+  )}
+</Pressable>
+
       </Animated.View>
     </View>
   );
@@ -105,15 +136,19 @@ const styles = StyleSheet.create({
   },
   fab: {
     zIndex: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   fabButton: {
     width: FAB_SIZE,
     height: FAB_SIZE,
     borderRadius: FAB_SIZE / 2,
-    backgroundColor: "#000",
+    borderWidth: 1,
+    borderColor: "#B6D0E3",
     justifyContent: "center",
     alignItems: "center",
-    elevation: 6,
   },
   menuItem: {
     position: "absolute",
@@ -122,8 +157,18 @@ const styles = StyleSheet.create({
     width: ITEM_SIZE,
     height: ITEM_SIZE,
     borderRadius: ITEM_SIZE / 2,
-    backgroundColor: "#333",
+    borderWidth: 1,
+    borderColor: "#B6D0E3",
     justifyContent: "center",
     alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  pressed: {
+    transform: [{ translateY: 2 }],
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
   },
 });
