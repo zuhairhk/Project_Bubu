@@ -109,9 +109,25 @@ static UiMode uiMode = START_IN_DEBUG_MODE ? UI_DEBUG : UI_WATCH;
 #define ANIM_H      (136 / FACE_SCALE)   // 34 — must match ROWS in pixel_editor_animation.py
 #define FACE_GREEN  0xA7F0
 
-// ===================== Animation state =====================
+// ===================== Animation =====================
+struct Animation {
+  const uint16_t* const* frames;  // PROGMEM array of frame pointers
+  int frameCount;
+  int delayMs;
+};
+
+// Register animations here — swap activeAnim to change what plays.
+static const Animation testAnim = { test_anim, test_frame_count, test_delay };
+static const Animation* activeAnim = &testAnim;
+
 static uint8_t  animFrame  = 0;
 static uint32_t lastAnimMs = 0;
+
+static void setAnimation(const Animation* anim) {
+  activeAnim = anim;
+  animFrame  = 0;
+  lastAnimMs = millis();
+}
 
 static const uint8_t labelSize = 1;
 static const uint8_t valueSize = 2;
@@ -352,7 +368,7 @@ static void initTFT() {
 /* ===================== Watch-face UI ===================== */
 // Draw the current animation frame (ANIM_W x ANIM_H pixels, each scaled up by FACE_SCALE).
 static void drawFaceRegion() {
-  const uint16_t* frame = (const uint16_t*)pgm_read_ptr(&test_anim[animFrame]);
+  const uint16_t* frame = (const uint16_t*)pgm_read_ptr(&activeAnim->frames[animFrame]);
   tft.startWrite();
   for (int16_t y = 0; y < ANIM_H; y++) {
     for (int16_t x = 0; x < ANIM_W; x++) {
@@ -368,15 +384,19 @@ static void drawFaceRegion() {
 
 // Advance to the next frame if enough time has passed.
 static void updateAnimation() {
-  if (uiMode != UI_WATCH || test_frame_count <= 1) return;
-  if (millis() - lastAnimMs >= (uint32_t)test_delay) {
+  if (uiMode != UI_WATCH || !activeAnim) return;
+  if (millis() - lastAnimMs >= (uint32_t)activeAnim->delayMs) {
     lastAnimMs = millis();
-    animFrame = (animFrame + 1) % test_frame_count;
+    animFrame = (animFrame + 1) % activeAnim->frameCount;
     drawFaceRegion();
   }
 }
 
 static void drawWatchFaceStatic() {
+  // Reset animation so the first frame is held for the full delay before advancing.
+  animFrame  = 0;
+  lastAnimMs = millis();
+
   tft.fillScreen(ST77XX_BLACK);
 
   drawFaceRegion();
