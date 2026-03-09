@@ -13,6 +13,8 @@
 
 // ===================== Animation frames =====================
 #include "test.h"   // test_anim[], test_frame_count, test_delay
+#include "sleep.h"  // sleep_anim[], sleep_frame_count, sleep_delay
+#include "smile.h"  // smile_anim[], smile_frame_count, smile_delay
 
 // ===================== BLE (NimBLE) =====================
 #include <NimBLEDevice.h>
@@ -116,8 +118,11 @@ struct Animation {
   int delayMs;
 };
 
+
 // Register animations here — swap activeAnim to change what plays.
-static const Animation testAnim = { test_anim, test_frame_count, test_delay };
+static const Animation testAnim  = { test_anim,  test_frame_count,  test_delay };
+static const Animation sleepAnim = { sleep_anim, sleep_frame_count, sleep_delay };
+static const Animation smileAnim = { smile_anim, smile_frame_count, smile_delay };
 static const Animation* activeAnim = &testAnim;
 
 static uint8_t  animFrame  = 0;
@@ -926,9 +931,24 @@ void loop() {
 
   handleModeToggleChord(causeStr);
 
-  if (b1.fell() || b2.fell() || b3.fell()) {
+
+  // Button 1: test.h animation
+  if (b1.fell()) {
+    setAnimation(&testAnim);
     lastActivity = millis();
-    bleSend("Button press | BPM=" + String(currentBPM));
+    bleSend("Button 1: test.h animation");
+  }
+  // Button 2: sleep.h animation
+  if (b2.fell()) {
+    setAnimation(&sleepAnim);
+    lastActivity = millis();
+    bleSend("Button 2: sleep.h animation");
+  }
+  // Button 3: smile.h animation
+  if (b3.fell()) {
+    setAnimation(&smileAnim);
+    lastActivity = millis();
+    bleSend("Button 3: smile.h animation");
   }
 
   static uint32_t lastAccel = 0;
