@@ -1,0 +1,4 @@
+"Reference","Qty","Value","DNP","Exclude from BOM","Exclude from Board","Footprint","Datasheet"
+"C1,C2,C3","3","100n","","","","Capacitor_SMD:C_0402_1005Metric_Pad0.74x0.62mm_HandSolder","~"
+"SW1,SW2,SW3","3","SW_Push","","","","Button_Switch_THT:SW_PUSH_6mm","~"
+"U1","1","switch3","","Excluded from BOM","","capstone_footprints:Buttons_header",""
