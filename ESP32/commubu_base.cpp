@@ -326,11 +326,8 @@ static void bleSend(const String& msg) {
 static void updateHrCharacteristic() {
   if (!hrChar) return;
 
-  String hrStr;
-  if (displayBPM > 0) hrStr = String(displayBPM);
-  else hrStr = "0";
-
-  hrChar->setValue(hrStr.c_str());
+  uint8_t val = (displayBPM > 0) ? (uint8_t)displayBPM : 0;
+  hrChar->setValue(&val, 1);
 
   if (bleConnected) {
     hrChar->notify();
