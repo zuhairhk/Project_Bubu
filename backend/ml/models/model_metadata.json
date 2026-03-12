@@ -1,7 +1,7 @@
 {
-  "trained_at": "2026-03-09T21:35:11.424478",
+  "trained_at": "2026-03-12T16:38:20.308605",
   "total_samples": 720,
-  "real_samples": 120,
+  "real_samples": 126,
   "synthetic_samples": 600,
   "mood_counts": {
     "happy": 120,

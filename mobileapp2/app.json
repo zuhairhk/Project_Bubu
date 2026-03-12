@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Commubu",
-    "slug": "mobileapp2",
+    "slug": "commubuapp",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.mobileapp2",
+      "bundleIdentifier": "com.zuhairhk.commubu",
       "infoPlist": {
         "NSBluetoothAlwaysUsageDescription": "This app uses Bluetooth to connect to your Commubu wearable device.",
         "NSBluetoothPeripheralUsageDescription": "This app uses Bluetooth to connect to your Commubu wearable device."
@@ -34,7 +34,8 @@
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.BLUETOOTH_CONNECT",
         "android.permission.ACCESS_FINE_LOCATION"
-      ]
+      ],
+      "package": "com.zuhairhk.commubu"
     },
     "web": {
       "bundler": "metro",
@@ -48,12 +49,20 @@
         "react-native-ble-plx",
         {
           "isBackgroundEnabled": false,
-          "modes": ["central"]
+          "modes": [
+            "central"
+          ]
         }
       ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "75daa9af-080f-41f0-bbfa-2449d1003125"
+      }
     }
   }
 }
