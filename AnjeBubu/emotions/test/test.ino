@@ -1,4 +1,8 @@
 #include <Arduino.h>
+// For code clarity: wake on any pin low
+#ifndef ESP_EXT1_WAKEUP_ANY_LOW
+#define ESP_EXT1_WAKEUP_ANY_LOW ((esp_sleep_ext1_wakeup_mode_t)0)
+#endif
 #include <Wire.h>
 #include <SPI.h>
 #include <math.h>
@@ -15,6 +19,31 @@
 #include "test.h"   // test_anim[], test_frame_count, test_delay
 #include "sleep.h"  // sleep_anim[], sleep_frame_count, sleep_delay
 #include "smile.h"  // smile_anim[], smile_frame_count, smile_delay
+
+// Animation struct and registration
+struct Animation {
+  const uint16_t* const* frames;  // PROGMEM array of frame pointers
+  int frameCount;
+  int delayMs;
+};
+
+static const Animation testAnim  = { test_anim,  test_frame_count,  test_delay };
+static const Animation sleepAnim = { sleep_anim, sleep_frame_count, sleep_delay };
+static const Animation smileAnim = { smile_anim, smile_frame_count, smile_delay };
+static const Animation* activeAnim = &testAnim;
+
+// Animation state variables
+static uint8_t  animFrame  = 0;
+static uint32_t lastAnimMs = 0;
+
+static void setAnimation(const Animation* anim) {
+  activeAnim = anim;
+  animFrame  = 0;
+  lastAnimMs = millis();
+}
+
+// ===================== Battery Fuel Gauge =====================
+#include <Adafruit_MAX1704X.h>
 
 // ===================== BLE (NimBLE) =====================
 #include <NimBLEDevice.h>
@@ -80,19 +109,30 @@ Adafruit_ST7789 tft = Adafruit_ST7789(&SPI, TFT_CS, TFT_DC, TFT_RST);
 static void screenOff() { digitalWrite(TFT_BL, LOW); }
 static void screenOn()  { digitalWrite(TFT_BL, HIGH); }
 
+/* ===================== Battery Fuel Gauge ===================== */
+Adafruit_MAX17048 maxlipo;
+static bool batteryGaugeOk = false;
+static float batteryVoltage = 0.0f;
+static int   batteryPercent = 0;
+static uint32_t lastBatteryPollMs = 0;
+static const uint32_t BATTERY_POLL_MS = 5000;
 
-// ===================== BLE UUIDs and Characteristics =====================
+/* ===================== BLE UUIDs ===================== */
 static const char* BLE_NAME = "Commubu";
+
 // Primary service
 static NimBLEUUID SERVICE_UUID("6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
-// UART-style characteristics
+
+// Existing UART-style characteristics
 static NimBLEUUID CHAR_UUID_RX    ("6E400002-B5A3-F393-E0A9-E50E24DCCA9E");
 static NimBLEUUID CHAR_UUID_TX    ("6E400003-B5A3-F393-E0A9-E50E24DCCA9E");
+
 // Parameter characteristics
 static NimBLEUUID CHAR_UUID_NAME  ("6E400004-B5A3-F393-E0A9-E50E24DCCA9E");
 static NimBLEUUID CHAR_UUID_SONG  ("6E400005-B5A3-F393-E0A9-E50E24DCCA9E");
 static NimBLEUUID CHAR_UUID_ARTIST("6E400006-B5A3-F393-E0A9-E50E24DCCA9E");
 static NimBLEUUID CHAR_UUID_TIME  ("6E400007-B5A3-F393-E0A9-E50E24DCCA9E"); // write HH:MM
+static NimBLEUUID CHAR_UUID_HR    ("6E400008-B5A3-F393-E0A9-E50E24DCCA9E"); // dedicated HR read/notify
 
 static NimBLEServer*         bleServer  = nullptr;
 static NimBLECharacteristic* txChar     = nullptr;
@@ -101,6 +141,7 @@ static NimBLECharacteristic* nameChar   = nullptr;
 static NimBLECharacteristic* songChar   = nullptr;
 static NimBLECharacteristic* artistChar = nullptr;
 static NimBLECharacteristic* timeChar   = nullptr;
+static NimBLECharacteristic* hrChar     = nullptr;
 static volatile bool bleConnected = false;
 
 static portMUX_TYPE rxMux = portMUX_INITIALIZER_UNLOCKED;
@@ -166,100 +207,25 @@ static void setCurrentTimeFromString(const String& s) {
   lastMinuteTickMs = millis();
 }
 
-/* ===================== UI cache for efficient redraws ===================== */
-static int lastDrawnSteps = -1;
-static int lastDrawnBPM = -999;
-static int lastDrawnADC = -99999;
-static String lastDrawnTrack = "";
-static String lastDrawnName = "";
-static String lastDrawnTime = "";
-static String lastWatchRx = "";
-static int16_t musicScrollX = 0;
-static uint32_t lastMusicScrollMs = 0;
+/* ===================== UI mode ===================== */
+enum UiMode {
+  UI_WATCH = 0,
+  UI_DEBUG = 1
+};
 
-static void invalidateWatchCache() {
-  lastDrawnSteps = -1;
-  lastDrawnBPM = -999;
-  lastDrawnADC = -99999;
-  lastDrawnTrack = "";
-  lastDrawnName = "";
-  lastDrawnTime = "";
-  lastWatchRx = "";
-  musicScrollX = 0;
-}
-static NimBLECharacteristic* txChar     = nullptr;
-static NimBLECharacteristic* rxChar     = nullptr;
-static NimBLECharacteristic* nameChar   = nullptr;
-static NimBLECharacteristic* songChar   = nullptr;
-static NimBLECharacteristic* artistChar = nullptr;
-static NimBLECharacteristic* timeChar   = nullptr;
+static UiMode uiMode = START_IN_DEBUG_MODE ? UI_DEBUG : UI_WATCH;
 
-static NimBLEServer*         bleServer = nullptr;
-static NimBLECharacteristic* txChar    = nullptr;
-static NimBLECharacteristic* rxChar    = nullptr;
-static volatile bool bleConnected = false;
+/* ===================== Watch-face colors/layout ===================== */
+#define FACE_GREEN  0xA7F0
 
-static portMUX_TYPE rxMux = portMUX_INITIALIZER_UNLOCKED;
-static volatile bool rxPending = false;
-static String rxMessage;
+static const uint8_t labelSize = 1;
+static const uint8_t valueSize = 2;
 
-// ---- Deferred parameter updates: callbacks store; loop() applies ----
-static volatile bool bleNamePending   = false;
-static volatile bool bleSongPending   = false;
-static volatile bool bleArtistPending = false;
-static volatile bool bleTimePending   = false;
+/* ===================== Animation layout ===================== */
+#define FACE_SCALE  4
+#define ANIM_W      (240 / FACE_SCALE)   // 60
+#define ANIM_H      (136 / FACE_SCALE)   // 34
 
-static String pendingName;
-static String pendingSong;
-static String pendingArtist;
-static String pendingTime;
-/* ===================== Parameterized watch content ===================== */
-static String displayName = "Commubu";
-static String currentSongTitle = "Let It Happen";
-static String currentArtist    = "Tame Impala";
-
-static String currentTrackLine() {
-  if (currentSongTitle.length() == 0 && currentArtist.length() == 0) return "";
-  if (currentSongTitle.length() == 0) return currentArtist;
-  if (currentArtist.length() == 0) return currentSongTitle;
-  return currentSongTitle + " - " + currentArtist;
-}
-
-/* ===================== Time state ===================== */
-// Time is set over BLE via CHAR_UUID_TIME in "HH:MM" format.
-// After sync, the device advances time locally every minute.
-static bool timeValid = false;
-static int currentHour = 0;
-static int currentMinute = 0;
-static uint32_t lastMinuteTickMs = 0;
-
-static String currentTimeString() {
-  if (!timeValid) return "--:--";
-  char buf[6];
-  snprintf(buf, sizeof(buf), "%02d:%02d", currentHour, currentMinute);
-  return String(buf);
-}
-
-static bool parseTimeString(const String& s, int& hh, int& mm) {
-  if (s.length() != 5 || s.charAt(2) != ':') return false;
-  if (!isDigit(s.charAt(0)) || !isDigit(s.charAt(1)) ||
-      !isDigit(s.charAt(3)) || !isDigit(s.charAt(4))) return false;
-
-  hh = (s.charAt(0) - '0') * 10 + (s.charAt(1) - '0');
-  mm = (s.charAt(3) - '0') * 10 + (s.charAt(4) - '0');
-
-  return (hh >= 0 && hh < 24 && mm >= 0 && mm < 60);
-}
-
-static void setCurrentTimeFromString(const String& s) {
-  int hh = 0, mm = 0;
-  if (!parseTimeString(s, hh, mm)) return;
-
-  currentHour = hh;
-  currentMinute = mm;
-  timeValid = true;
-  lastMinuteTickMs = millis();
-}
 /* ===================== Music bar ===================== */
 static const uint8_t musicTextSize = 2;
 static const int16_t musicBarTopY = 288;
@@ -274,58 +240,25 @@ static const uint32_t MUSIC_SCROLL_INTERVAL_MS = 140;
 static const int16_t MUSIC_SCROLL_STEP = 2;
 static const int16_t MUSIC_GAP_PX = 20;
 
-static portMUX_TYPE rxMux = portMUX_INITIALIZER_UNLOCKED;
-static volatile bool rxPending = false;
-static String rxMessage;
-
-/* ===================== UI mode ===================== */
-enum UiMode {
-  UI_WATCH = 0,
-  UI_DEBUG = 1
-};
-
-static UiMode uiMode = START_IN_DEBUG_MODE ? UI_DEBUG : UI_WATCH;
-
-/* ===================== Watch-face colors/layout ===================== */
-// Must match SCALE in pixel_editor_animation.py.
-// FACE_SCALE=2 means each bitmap pixel is drawn as a 2x2 block (120x68 → 240x136 on screen).
-#define FACE_SCALE  4
-#define ANIM_W      (240 / FACE_SCALE)   // 60 — must match COLS in pixel_editor_animation.py
-#define ANIM_H      (136 / FACE_SCALE)   // 34 — must match ROWS in pixel_editor_animation.py
-#define FACE_GREEN  0xA7F0
-
-// ===================== Animation =====================
-struct Animation {
-  const uint16_t* const* frames;  // PROGMEM array of frame pointers
-  int frameCount;
-  int delayMs;
-};
-
-
-// Register animations here — swap activeAnim to change what plays.
-static const Animation testAnim  = { test_anim,  test_frame_count,  test_delay };
-static const Animation sleepAnim = { sleep_anim, sleep_frame_count, sleep_delay };
-static const Animation smileAnim = { smile_anim, smile_frame_count, smile_delay };
-static const Animation* activeAnim = &testAnim;
-
-static uint8_t  animFrame  = 0;
-static uint32_t lastAnimMs = 0;
-
-static void setAnimation(const Animation* anim) {
-  activeAnim = anim;
-  animFrame  = 0;
-  lastAnimMs = millis();
-}
-
-static const uint8_t labelSize = 1;
-static const uint8_t valueSize = 2;
-static const uint8_t xyzSize   = 1;
-static const int16_t xyzY      = 308;
-
 /* ===================== Heart-rate processing ===================== */
-static const uint32_t HR_SAMPLE_MS  = 10;    // 100 Hz
-static const uint32_t HR_MIN_IBI_MS = 300;   // max ~200 BPM
-static const uint32_t HR_MAX_IBI_MS = 2000;  // min ~30 BPM
+// Set to 1 to print raw/filtered/peak values to Serial (use Serial Plotter)
+#define HR_DEBUG 1
+
+static const uint32_t HR_SAMPLE_MS  = 10;
+static const uint32_t HR_MIN_IBI_MS = 300;
+static const uint32_t HR_MAX_IBI_MS = 2000;
+// Minimum signal peak required to consider a finger is present.
+// Below this, all BPM output is suppressed. Tune up if you still see
+// false readings with no finger, or down if detection is too slow to start.
+static const float HR_FINGER_PEAK_MIN = 15.0f;
+
+/* ---- Waveform strip (above BPM, middle column) ---- */
+static const int16_t HR_WAVE_X = 80;   // left edge of middle column
+static const int16_t HR_WAVE_W = 80;   // one column wide
+static const int16_t HR_WAVE_Y = 218;  // just below the time display
+static const int16_t HR_WAVE_H = 10;   // strip height in pixels
+static float    hrWaveBuf[HR_WAVE_W];  // circular buffer of hrLp samples
+static uint8_t  hrWaveHead = 0;        // write pointer
 
 float hrDc = 0.0f;
 float hrLp = 0.0f;
@@ -337,12 +270,32 @@ bool hrArmed = true;
 uint32_t lastHrSampleMs = 0;
 uint32_t lastBeatMs = 0;
 int currentBPM = 0;
+int displayBPM = 0;
 int hrRawLatest = 0;
 
 static const int BPM_AVG_COUNT = 5;
 int bpmHist[BPM_AVG_COUNT] = {0};
 int bpmHistIdx = 0;
 int bpmHistUsed = 0;
+
+/* ===================== Cached watch UI values ===================== */
+static int lastDrawnSteps = -1;
+static int lastDrawnBPM = -999;
+static int lastDrawnBatteryPercent = -999;
+static String lastDrawnTrack = "";
+static String lastDrawnName = "";
+static String lastDrawnTime = "";
+static String lastWatchRx = "";
+
+/* ===================== Forward declarations ===================== */
+static void redrawCurrentUI(const char* wakeStr);
+static void updateWatchName(bool force = false);
+static void updateWatchTime(bool force = false);
+static void updateMusicBar(bool force = false);
+static void drawFaceRegion();
+static void applyPendingBleParams();
+static void pollBattery();
+static void updateHrCharacteristic();
 
 /* ===================== Helpers ===================== */
 static int averageBPM(int newBpm) {
@@ -364,11 +317,26 @@ static void resetHeartState() {
   hrArmed = true;
   lastBeatMs = 0;
   currentBPM = 0;
+  displayBPM = 0;
   hrRawLatest = 0;
 
   for (int i = 0; i < BPM_AVG_COUNT; i++) bpmHist[i] = 0;
   bpmHistIdx = 0;
   bpmHistUsed = 0;
+
+  for (int i = 0; i < HR_WAVE_W; i++) hrWaveBuf[i] = 0.0f;
+  hrWaveHead = 0;
+}
+
+static void invalidateWatchCache() {
+  lastDrawnSteps = -1;
+  lastDrawnBPM = -999;
+  lastDrawnBatteryPercent = -999;
+  lastDrawnTrack = "";
+  lastDrawnName = "";
+  lastDrawnTime = "";
+  lastWatchRx = "";
+  musicScrollX = 0;
 }
 
 static void bleSend(const String& msg) {
@@ -377,7 +345,18 @@ static void bleSend(const String& msg) {
   if (bleConnected) txChar->notify();
 }
 
-/* ===================== Text helpers for watch UI ===================== */
+static void updateHrCharacteristic() {
+  if (!hrChar) return;
+
+  uint8_t val = (displayBPM > 0) ? (uint8_t)displayBPM : 0;
+  hrChar->setValue(&val, 1);
+
+  if (bleConnected) {
+    hrChar->notify();
+  }
+}
+
+/* ===================== Text helpers ===================== */
 int16_t textWidth(const char *txt, uint8_t size) {
   int16_t x1, y1;
   uint16_t w, h;
@@ -386,8 +365,24 @@ int16_t textWidth(const char *txt, uint8_t size) {
   return w;
 }
 
+static int16_t stringWidth(const String& txt, uint8_t size) {
+  int16_t x1, y1;
+  uint16_t w, h;
+  tft.setTextSize(size);
+  tft.getTextBounds(txt.c_str(), 0, 0, &x1, &y1, &w, &h);
+  return (int16_t)w;
+}
+
 void drawCenteredText(const char *txt, int16_t y, uint8_t size, uint16_t color) {
   int16_t w = textWidth(txt, size);
+  tft.setTextSize(size);
+  tft.setTextColor(color, ST77XX_BLACK);
+  tft.setCursor((tft.width() - w) / 2, y);
+  tft.print(txt);
+}
+
+static void drawCenteredString(const String& txt, int16_t y, uint8_t size, uint16_t color) {
+  int16_t w = stringWidth(txt, size);
   tft.setTextSize(size);
   tft.setTextColor(color, ST77XX_BLACK);
   tft.setCursor((tft.width() - w) / 2, y);
@@ -421,81 +416,147 @@ void printRightFixedBox(const char *txt, int16_t boxLeft, int16_t boxWidth,
   tft.print(txt);
 }
 
-/* ===================== BLE callbacks ===================== */
+/* ===================== Battery helpers ===================== */
+static uint16_t batteryColor() {
+  return (batteryPercent < 20) ? ST77XX_RED : FACE_GREEN;
+}
 
-// BLE Callbacks for parameter characteristics
+static void drawBatteryIcon(int16_t x, int16_t y, int percent, uint16_t color) {
+  const int16_t bodyW = 22;
+  const int16_t bodyH = 12;
+  const int16_t capW  = 3;
+  const int16_t capH  = 6;
+
+  tft.drawRoundRect(x, y, bodyW, bodyH, 2, color);
+  tft.fillRect(x + bodyW, y + 3, capW, capH, color);
+
+  int fillW = (percent * (bodyW - 4)) / 100;
+  if (fillW < 0) fillW = 0;
+  if (fillW > (bodyW - 4)) fillW = bodyW - 4;
+
+  if (fillW > 0) {
+    tft.fillRect(x + 2, y + 2, fillW, bodyH - 4, color);
+  }
+}
+
+static void pollBattery() {
+  uint32_t now = millis();
+  if (now - lastBatteryPollMs < BATTERY_POLL_MS) return;
+  lastBatteryPollMs = now;
+
+  if (!batteryGaugeOk) {
+    batteryVoltage = 0.0f;
+    batteryPercent = 0;
+    return;
+  }
+
+  batteryVoltage = maxlipo.cellVoltage();
+
+  float pct = maxlipo.cellPercent();
+  if (isnan(pct) || isinf(pct)) pct = 0.0f;
+  if (pct < 0.0f) pct = 0.0f;
+  if (pct > 100.0f) pct = 100.0f;
+
+  batteryPercent = (int)(pct + 0.5f);
+}
+
+/* ===================== BLE callbacks ===================== */
 class RxCallbacks : public NimBLECharacteristicCallbacks {
 public:
   void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
     (void)connInfo;
+
     std::string v = c->getValue();
     if (v.empty()) return;
+
     String msg;
     msg.reserve(v.size());
     for (size_t i = 0; i < v.size(); i++) msg += (char)v[i];
+
     portENTER_CRITICAL(&rxMux);
     rxMessage = msg;
     rxPending = true;
     portEXIT_CRITICAL(&rxMux);
   }
 };
+
 class NameCallbacks : public NimBLECharacteristicCallbacks {
 public:
   void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
-    (void)c; (void)connInfo;
+    (void)c;
+    (void)connInfo;
+
     std::string v = c->getValue();
     if (v.empty()) return;
+
     String s = String(v.c_str());
     s.trim();
     if (s.length() == 0) return;
+
     portENTER_CRITICAL(&rxMux);
     pendingName = s;
     bleNamePending = true;
     portEXIT_CRITICAL(&rxMux);
   }
 };
+
 class SongCallbacks : public NimBLECharacteristicCallbacks {
 public:
   void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
-    (void)c; (void)connInfo;
+    (void)c;
+    (void)connInfo;
+
     std::string v = c->getValue();
     if (v.empty()) return;
+
     String s = String(v.c_str());
     s.trim();
+
     portENTER_CRITICAL(&rxMux);
     pendingSong = s;
     bleSongPending = true;
     portEXIT_CRITICAL(&rxMux);
   }
 };
+
 class ArtistCallbacks : public NimBLECharacteristicCallbacks {
 public:
   void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
-    (void)c; (void)connInfo;
+    (void)c;
+    (void)connInfo;
+
     std::string v = c->getValue();
     if (v.empty()) return;
+
     String s = String(v.c_str());
     s.trim();
+
     portENTER_CRITICAL(&rxMux);
     pendingArtist = s;
     bleArtistPending = true;
     portEXIT_CRITICAL(&rxMux);
   }
 };
+
 class TimeCallbacks : public NimBLECharacteristicCallbacks {
 public:
   void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
-    (void)c; (void)connInfo;
+    (void)c;
+    (void)connInfo;
+
     std::string v = c->getValue();
     if (v.empty()) return;
+
     String s = String(v.c_str());
     s.trim();
+
     portENTER_CRITICAL(&rxMux);
     pendingTime = s;
     bleTimePending = true;
     portEXIT_CRITICAL(&rxMux);
   }
 };
+
 class ServerCallbacks : public NimBLEServerCallbacks {
 public:
   void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
@@ -503,6 +564,7 @@ public:
     bleConnected = true;
     Serial.println("BLE: connected");
   }
+
   void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
     (void)pServer; (void)connInfo; (void)reason;
     bleConnected = false;
@@ -560,6 +622,12 @@ static void initBLE() {
   timeChar->setValue(currentTimeString().c_str());
   timeChar->setCallbacks(new TimeCallbacks());
 
+  hrChar = svc->createCharacteristic(
+    CHAR_UUID_HR,
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
+  );
+  hrChar->setValue("0");
+
   svc->start();
 
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
@@ -575,84 +643,6 @@ static void initBLE() {
   adv->start();
 
   Serial.println("BLE: advertising");
-}
-/* ===================== Pending BLE params ===================== */
-static void applyPendingBleParams() {
-  bool doName = false, doSong = false, doArtist = false, doTime = false;
-  String newName, newSong, newArtist, newTime;
-
-  portENTER_CRITICAL(&rxMux);
-  if (bleNamePending) {
-    newName = pendingName;
-    bleNamePending = false;
-    doName = true;
-  }
-  if (bleSongPending) {
-    newSong = pendingSong;
-    bleSongPending = false;
-    doSong = true;
-  }
-  if (bleArtistPending) {
-    newArtist = pendingArtist;
-    bleArtistPending = false;
-    doArtist = true;
-  }
-  if (bleTimePending) {
-    newTime = pendingTime;
-    bleTimePending = false;
-    doTime = true;
-  }
-  portEXIT_CRITICAL(&rxMux);
-
-  if (doName) {
-    displayName = newName;
-    if (nameChar) nameChar->setValue(displayName.c_str());
-    // Optionally update UI here
-    bleSend("Name=" + displayName);
-  }
-
-  if (doSong) {
-    currentSongTitle = newSong;
-    if (songChar) songChar->setValue(currentSongTitle.c_str());
-    // Optionally update UI here
-    bleSend("Song=" + currentSongTitle);
-  }
-
-  if (doArtist) {
-    currentArtist = newArtist;
-    if (artistChar) artistChar->setValue(currentArtist.c_str());
-    // Optionally update UI here
-    bleSend("Artist=" + currentArtist);
-  }
-
-  if (doTime) {
-    int hh = 0, mm = 0;
-    if (parseTimeString(newTime, hh, mm)) {
-      setCurrentTimeFromString(newTime);
-      if (timeChar) timeChar->setValue(currentTimeString().c_str());
-      // Optionally update UI here
-      bleSend("Time=" + currentTimeString());
-    } else {
-      bleSend("Time write invalid, use HH:MM");
-    }
-  }
-}
-/* ===================== Time tick ===================== */
-static void updateLocalClock() {
-  if (!timeValid) return;
-  uint32_t nowMs = millis();
-  while ((uint32_t)(nowMs - lastMinuteTickMs) >= 60000UL) {
-    lastMinuteTickMs += 60000UL;
-    currentMinute++;
-    if (currentMinute >= 60) {
-      currentMinute = 0;
-      currentHour = (currentHour + 1) % 24;
-    }
-    if (timeChar) {
-      timeChar->setValue(currentTimeString().c_str());
-    }
-    // Optionally update UI here
-  }
 }
 
 /* ===================== Debounced button ===================== */
@@ -704,7 +694,7 @@ static void initTFT() {
   SPI.begin(TFT_SCLK, -1, TFT_MOSI, TFT_CS);
 
   tft.init(240, 320);
-  tft.setRotation(0);   // portrait for watch-face layout
+  tft.setRotation(0);
   tft.setSPISpeed(20000000);
 
   tft.fillScreen(ST77XX_BLACK);
@@ -714,102 +704,225 @@ static void initTFT() {
 }
 
 /* ===================== Watch-face UI ===================== */
-// Draw the current animation frame (ANIM_W x ANIM_H pixels, each scaled up by FACE_SCALE).
 static void drawFaceRegion() {
+  if (!activeAnim) return;
   const uint16_t* frame = (const uint16_t*)pgm_read_ptr(&activeAnim->frames[animFrame]);
-  tft.startWrite();
   for (int16_t y = 0; y < ANIM_H; y++) {
     for (int16_t x = 0; x < ANIM_W; x++) {
       uint16_t color = pgm_read_word(&frame[y * ANIM_W + x]);
-      for (int16_t dy = 0; dy < FACE_SCALE; dy++)
-        for (int16_t dx = 0; dx < FACE_SCALE; dx++)
-          tft.writePixel(x * FACE_SCALE + dx, y * FACE_SCALE + dy, color);
+      tft.fillRect(x * FACE_SCALE, y * FACE_SCALE, FACE_SCALE, FACE_SCALE, color);
     }
   }
-  tft.endWrite();
   tft.drawFastHLine(0, ANIM_H * FACE_SCALE, tft.width(), ST77XX_WHITE);
 }
 
-// Advance to the next frame if enough time has passed.
 static void updateAnimation() {
-  if (uiMode != UI_WATCH || !activeAnim) return;
-  if (millis() - lastAnimMs >= (uint32_t)activeAnim->delayMs) {
+  if (uiMode != UI_WATCH || !activeAnim || activeAnim->frameCount <= 1) return;
+
+  uint32_t effectiveDelay = (uint32_t)activeAnim->delayMs;
+  if (effectiveDelay < 120UL) effectiveDelay = 120UL;
+
+  if (millis() - lastAnimMs >= effectiveDelay) {
     lastAnimMs = millis();
     animFrame = (animFrame + 1) % activeAnim->frameCount;
     drawFaceRegion();
   }
 }
 
-static void drawWatchFaceStatic() {
-  // Reset animation so the first frame is held for the full delay before advancing.
-  animFrame  = 0;
-  lastAnimMs = millis();
-
-  tft.fillScreen(ST77XX_BLACK);
-
-  drawFaceRegion();
-
-  drawCenteredText("Commubu", 155, 2, FACE_GREEN);
-
-  // Placeholder time area
-  drawCenteredText("--:--", 180, 4, FACE_GREEN);
-
-  // Stats row
-  const int16_t w = tft.width();
-  const int16_t colW = w / 3;
-
-  int16_t baseY = 238;
-  int16_t valY  = baseY + 16;
-
-  printLeft("Steps", 10, baseY, labelSize, FACE_GREEN);
-  printCenterFixedBox("BPM", colW * 1, colW, baseY, labelSize, FACE_GREEN);
-  printRightFixedBox("ADC", colW * 2, colW, baseY, labelSize, FACE_GREEN);
-
-  char sBuf[16], bBuf[16], aBuf[16];
-  snprintf(sBuf, sizeof(sBuf), "%d", stepsNew);
-  if (currentBPM > 0) snprintf(bBuf, sizeof(bBuf), "%d", currentBPM);
-  else snprintf(bBuf, sizeof(bBuf), "--");
-  snprintf(aBuf, sizeof(aBuf), "%d", hrRawLatest);
-
-  printLeft(sBuf, 10, valY, valueSize, FACE_GREEN);
-  printCenterFixedBox(bBuf, colW * 1, colW, valY, valueSize, FACE_GREEN);
-  printRightFixedBox(aBuf, colW * 2, colW, valY, valueSize, FACE_GREEN);
+static void drawMusicBarFrame() {
+  tft.fillRect(0, musicBarTopY, tft.width(), musicBarHeight, ST77XX_BLACK);
+  tft.drawFastHLine(0, musicBarTopY, tft.width(), ST77XX_WHITE);
 }
 
-static void updateWatchStats() {
+static void drawHrWaveform() {
+  if (uiMode != UI_WATCH) return;
+
+  float scale = (hrPeak > 1.0f) ? (float)(HR_WAVE_H / 2 - 1) / hrPeak : 0.0f;
+  int16_t midY = HR_WAVE_Y + HR_WAVE_H / 2;
+
+  for (int16_t i = 0; i < HR_WAVE_W; i++) {
+    int idx = (hrWaveHead + i) % HR_WAVE_W;
+    float v  = hrWaveBuf[idx];
+    int16_t x = HR_WAVE_X + i;
+
+    tft.drawFastVLine(x, HR_WAVE_Y, HR_WAVE_H, ST77XX_BLACK);
+
+    int16_t dy = (int16_t)(v * scale);
+    dy = constrain(dy, -(HR_WAVE_H / 2 - 1), HR_WAVE_H / 2 - 1);
+    // Brightest pixel at signal point; dimmer center baseline
+    tft.drawPixel(x, midY, 0x2104);           // faint grey baseline
+    tft.drawPixel(x, midY - dy, ST77XX_WHITE); // signal
+  }
+}
+
+static void drawWatchStatsLabels() {
   const int16_t w = tft.width();
   const int16_t colW = w / 3;
   const int16_t baseY = 238;
-  const int16_t valY  = baseY + 16;
 
-  // Clear only values row
-  tft.fillRect(0, valY - 2, tft.width(), 22, ST77XX_BLACK);
+  printLeft("Steps", 10, baseY, labelSize, FACE_GREEN);
+  printCenterFixedBox("BPM", colW * 1, colW, baseY, labelSize, FACE_GREEN);
+}
 
-  char sBuf[16], bBuf[16], aBuf[16];
+static void updateWatchName(bool force) {
+  if (!force && lastDrawnName == displayName) return;
+
+  int16_t newW = stringWidth(displayName, 2);
+  int16_t newX = (tft.width() - newW) / 2;
+  // Draw text in-place (bg colour overwrites old pixels in the overlap zone)
+  drawCenteredString(displayName, 155, 2, FACE_GREEN);
+  // Clear only the margins left over from a longer previous name
+  if (newX > 0)
+    tft.fillRect(0, 150, newX, 20, ST77XX_BLACK);
+  tft.fillRect(newX + newW, 150, tft.width() - (newX + newW), 20, ST77XX_BLACK);
+
+  lastDrawnName = displayName;
+}
+
+static void updateWatchTime(bool force) {
+  String nowStr = currentTimeString();
+  if (!force && lastDrawnTime == nowStr) return;
+
+  tft.fillRect(0, 172, tft.width(), 42, ST77XX_BLACK);
+  drawCenteredString(nowStr, 180, 4, FACE_GREEN);
+
+  lastDrawnTime = nowStr;
+}
+
+static void drawWatchStatsValues(bool force = false) {
+  if (!force &&
+      lastDrawnSteps == stepsNew &&
+      lastDrawnBPM == displayBPM &&
+      lastDrawnBatteryPercent == batteryPercent) {
+    return;
+  }
+
+  const int16_t w = tft.width();
+  const int16_t colW = w / 3;
+  const int16_t valY = 254;
+
+  tft.fillRect(0, valY - 2, tft.width(), 34, ST77XX_BLACK);
+
+  char sBuf[16], bBuf[16], pBuf[16];
   snprintf(sBuf, sizeof(sBuf), "%d", stepsNew);
-  if (currentBPM > 0) snprintf(bBuf, sizeof(bBuf), "%d", currentBPM);
+  if (displayBPM > 0) snprintf(bBuf, sizeof(bBuf), "%d", displayBPM);
   else snprintf(bBuf, sizeof(bBuf), "--");
-  snprintf(aBuf, sizeof(aBuf), "%d", hrRawLatest);
+  snprintf(pBuf, sizeof(pBuf), "%d%%", batteryPercent);
 
   printLeft(sBuf, 10, valY, valueSize, FACE_GREEN);
   printCenterFixedBox(bBuf, colW * 1, colW, valY, valueSize, FACE_GREEN);
-  printRightFixedBox(aBuf, colW * 2, colW, valY, valueSize, FACE_GREEN);
+
+  uint16_t col = batteryColor();
+  int16_t iconX = colW * 2 + (colW - 26) / 2;
+  int16_t iconY = 239;
+
+  drawBatteryIcon(iconX, iconY, batteryPercent, col);
+
+  tft.setTextSize(1);
+  tft.setTextColor(col, ST77XX_BLACK);
+
+  String pctStr = String(pBuf);
+  int16_t txtW = stringWidth(pctStr, 1);
+  int16_t txtX = colW * 2 + (colW - txtW) / 2;
+  tft.setCursor(txtX, 256);
+  tft.print(pctStr);
+
+  lastDrawnSteps = stepsNew;
+  lastDrawnBPM = displayBPM;
+  lastDrawnBatteryPercent = batteryPercent;
 }
 
-static void updateXYZRow(float x, float y, float z) {
-  tft.fillRect(0, xyzY - 2, tft.width(), (xyzSize * 8) + 6, ST77XX_BLACK);
+static void drawWatchRxArea(const String& msg) {
+  String clipped = msg;
+  clipped.trim();
+  if (clipped.length() > 26) clipped = clipped.substring(0, 26);
+  if (clipped == lastWatchRx) return;
 
-  char xs[16], ys[16], zs[16];
-  snprintf(xs, sizeof(xs), "X: %.1f", x);
-  snprintf(ys, sizeof(ys), "Y: %.1f", y);
-  snprintf(zs, sizeof(zs), "Z: %.1f", z);
+  tft.fillRect(0, 274, 240, 12, ST77XX_BLACK);
+  tft.setCursor(6, 275);
+  tft.setTextSize(1);
+  tft.setTextColor(FACE_GREEN, ST77XX_BLACK);
+  tft.print("RX: ");
+  tft.print(clipped);
 
-  const int16_t colW = tft.width() / 3;
-  const int16_t margin = 6;
+  lastWatchRx = clipped;
+}
 
-  printLeft(xs, margin, xyzY, xyzSize, FACE_GREEN);
-  printCenterFixedBox(ys, colW * 1, colW, xyzY, xyzSize, FACE_GREEN);
-  printRightFixedBox(zs, colW * 2, colW - margin, xyzY, xyzSize, FACE_GREEN);
+static void updateMusicBar(bool force) {
+  static int16_t textW = 0;
+  String track = currentTrackLine();
+
+  if (force || track != lastDrawnTrack) {
+    musicScrollX = 0;
+    textW = stringWidth(track, musicTextSize);
+    lastDrawnTrack = track;
+    lastMusicScrollMs = millis();
+  }
+
+  uint32_t now = millis();
+
+  if (textW <= musicTextW) {
+    if (!force) return;
+
+    tft.fillRect(0, musicBarTopY + 2, tft.width(), musicBarHeight - 4, ST77XX_BLACK);
+    tft.setTextWrap(false);
+    tft.setTextSize(musicTextSize);
+    tft.setTextColor(FACE_GREEN, ST77XX_BLACK);
+    tft.setCursor(musicTextX, musicBarTextY);
+    tft.print(track);
+    return;
+  }
+
+  if (!force && (now - lastMusicScrollMs < MUSIC_SCROLL_INTERVAL_MS)) {
+    return;
+  }
+
+  if (!force) {
+    lastMusicScrollMs = now;
+    musicScrollX += MUSIC_SCROLL_STEP;
+    if (musicScrollX >= (textW + MUSIC_GAP_PX)) {
+      musicScrollX = 0;
+    }
+  }
+
+  tft.setTextWrap(false);
+  tft.setTextSize(musicTextSize);
+  tft.setTextColor(FACE_GREEN, ST77XX_BLACK);
+
+  int16_t drawX = musicTextX - musicScrollX;
+
+  // First copy — use actual cursor X after print as the true text end
+  tft.setCursor(drawX, musicBarTextY);
+  tft.print(track);
+  int16_t actualEnd = tft.getCursorX();
+
+  // Second copy starts after the real end of the first copy + gap
+  int16_t drawX2 = actualEnd + MUSIC_GAP_PX;
+  tft.setCursor(drawX2, musicBarTextY);
+  tft.print(track);
+
+  // Clear only the gap between the two copies
+  int16_t barRight = musicTextX + musicTextW;
+  int16_t gapStart = max(actualEnd, (int16_t)musicTextX);
+  int16_t gapEnd   = min(drawX2, barRight);
+  if (gapEnd > gapStart) {
+    tft.fillRect(gapStart, musicBarTopY + 2, gapEnd - gapStart, musicBarHeight - 4, ST77XX_BLACK);
+  }
+}
+
+static void drawWatchFaceStatic() {
+  tft.fillScreen(ST77XX_BLACK);
+
+  drawFaceRegion();
+  updateWatchName(true);
+  updateWatchTime(true);
+
+  drawWatchStatsLabels();
+  drawWatchStatsValues(true);
+
+  tft.fillRect(0, 274, 240, 12, ST77XX_BLACK);
+  drawMusicBarFrame();
+  updateMusicBar(true);
 }
 
 /* ===================== Debug UI ===================== */
@@ -848,13 +961,14 @@ static void drawDebugUI(const char* wakeStr) {
   tft.setTextSize(2);
   tft.setCursor(10, 65);
   tft.print("BPM: ");
-  if (currentBPM > 0) tft.print(currentBPM);
+  if (displayBPM > 0) tft.print(displayBPM);
   else tft.print("--");
 
   tft.setTextSize(1);
   tft.setCursor(10, 92);
-  tft.print("ADC: ");
-  tft.print(hrRawLatest);
+  tft.print("Batt: ");
+  tft.print(batteryPercent);
+  tft.print("%");
 
   tft.setTextSize(2);
   tft.setCursor(10, 118);
@@ -882,31 +996,53 @@ static void drawDebugUI(const char* wakeStr) {
 }
 
 static void updateDebugHRonTFT() {
+  static int lastDbgBpm = -999;
+  static int lastDbgBatt = -999;
+
+  if (lastDbgBpm == displayBPM && lastDbgBatt == batteryPercent) return;
+
   tft.fillRect(10, 65, 220, 40, ST77XX_BLACK);
 
   tft.setCursor(10, 65);
   tft.setTextSize(2);
   tft.setTextColor(ST77XX_WHITE);
   tft.print("BPM: ");
-  if (currentBPM > 0) tft.print(currentBPM);
+  if (displayBPM > 0) tft.print(displayBPM);
   else tft.print("--");
 
   tft.setCursor(10, 92);
   tft.setTextSize(1);
-  tft.print("ADC: ");
-  tft.print(hrRawLatest);
+  tft.print("Batt: ");
+  tft.print(batteryPercent);
+  tft.print("%");
+
+  lastDbgBpm = displayBPM;
+  lastDbgBatt = batteryPercent;
 }
 
 static void updateDebugStepsOnTFT() {
+  static int lastDbgSteps = -1;
+  if (lastDbgSteps == stepsNew) return;
+
   tft.fillRect(10, 118, 220, 20, ST77XX_BLACK);
   tft.setCursor(10, 118);
   tft.setTextSize(2);
   tft.setTextColor(ST77XX_WHITE);
   tft.print("Steps: ");
   tft.print(stepsNew);
+
+  lastDbgSteps = stepsNew;
 }
 
 static void updateDebugAccelOnTFT() {
+  static float prevX = 9999.0f, prevY = 9999.0f, prevZ = 9999.0f;
+
+  if (fabsf(prevX - lastAx) < 0.1f &&
+      fabsf(prevY - lastAy) < 0.1f &&
+      fabsf(prevZ - lastAz) < 0.1f) {
+    return;
+  }
+
   tft.fillRect(10, 148, 220, 32, ST77XX_BLACK);
   tft.setTextSize(1);
   tft.setTextColor(ST77XX_WHITE);
@@ -916,6 +1052,72 @@ static void updateDebugAccelOnTFT() {
   tft.print("Y: "); tft.print(lastAy, 1);
   tft.setCursor(10, 172);
   tft.print("Z: "); tft.print(lastAz, 1);
+
+  prevX = lastAx;
+  prevY = lastAy;
+  prevZ = lastAz;
+}
+
+/* ===================== Pending BLE params ===================== */
+static void applyPendingBleParams() {
+  bool doName = false, doSong = false, doArtist = false, doTime = false;
+  String newName, newSong, newArtist, newTime;
+
+  portENTER_CRITICAL(&rxMux);
+  if (bleNamePending) {
+    newName = pendingName;
+    bleNamePending = false;
+    doName = true;
+  }
+  if (bleSongPending) {
+    newSong = pendingSong;
+    bleSongPending = false;
+    doSong = true;
+  }
+  if (bleArtistPending) {
+    newArtist = pendingArtist;
+    bleArtistPending = false;
+    doArtist = true;
+  }
+  if (bleTimePending) {
+    newTime = pendingTime;
+    bleTimePending = false;
+    doTime = true;
+  }
+  portEXIT_CRITICAL(&rxMux);
+
+  if (doName) {
+    displayName = newName;
+    if (nameChar) nameChar->setValue(displayName.c_str());
+    if (uiMode == UI_WATCH) updateWatchName(true);
+    bleSend("Name=" + displayName);
+  }
+
+  if (doSong) {
+    currentSongTitle = newSong;
+    if (songChar) songChar->setValue(currentSongTitle.c_str());
+    if (uiMode == UI_WATCH) updateMusicBar(true);
+    bleSend("Song=" + currentSongTitle);
+  }
+
+  if (doArtist) {
+    currentArtist = newArtist;
+    if (artistChar) artistChar->setValue(currentArtist.c_str());
+    if (uiMode == UI_WATCH) updateMusicBar(true);
+    bleSend("Artist=" + currentArtist);
+  }
+
+  if (doTime) {
+    int hh = 0, mm = 0;
+    if (parseTimeString(newTime, hh, mm)) {
+      setCurrentTimeFromString(newTime);
+      if (timeChar) timeChar->setValue(currentTimeString().c_str());
+      if (uiMode == UI_WATCH) updateWatchTime(true);
+      bleSend("Time=" + currentTimeString());
+    } else {
+      bleSend("Time write invalid, use HH:MM");
+    }
+  }
 }
 
 /* ===================== UI dispatch ===================== */
@@ -923,26 +1125,8 @@ static void redrawCurrentUI(const char* wakeStr) {
   if (uiMode == UI_DEBUG) {
     drawDebugUI(wakeStr);
   } else {
+    invalidateWatchCache();
     drawWatchFaceStatic();
-    updateXYZRow(lastAx, lastAy, lastAz);
-  }
-}
-
-static void updateUiFast() {
-  if (uiMode == UI_DEBUG) {
-    updateDebugHRonTFT();
-    updateDebugAccelOnTFT();
-  } else {
-    updateWatchStats();
-    updateXYZRow(lastAx, lastAy, lastAz);
-  }
-}
-
-static void updateUiStepsOnly() {
-  if (uiMode == UI_DEBUG) {
-    updateDebugStepsOnTFT();
-  } else {
-    updateWatchStats();
   }
 }
 
@@ -950,15 +1134,7 @@ static void showRxOnTFT(const String& msg) {
   if (uiMode == UI_DEBUG) {
     showRxOnTFT_Debug(msg);
   } else {
-    // In watch mode, show RX in a small strip above XYZ line
-    tft.fillRect(0, 286, 240, 16, ST77XX_BLACK);
-    tft.setCursor(6, 288);
-    tft.setTextSize(1);
-    tft.setTextColor(FACE_GREEN, ST77XX_BLACK);
-    tft.print("RX: ");
-    String clipped = msg;
-    if (clipped.length() > 22) clipped = clipped.substring(0, 22);
-    tft.print(clipped);
+    drawWatchRxArea(msg);
   }
 }
 
@@ -1035,7 +1211,7 @@ static void enterDeepSleep() {
       (1ULL << BTN2) |
       (1ULL << BTN3);
 
-  esp_sleep_enable_ext1_wakeup(wakeMask, ESP_EXT1_WAKEUP_ANY_LOW);
+  esp_sleep_enable_ext1_wakeup(wakeMask, ESP_EXT1_WAKEUP_ANY_LOW); // 0 = wake on any pin low
 
   Serial.println("Entering deep sleep now.");
   Serial.flush();
@@ -1117,18 +1293,44 @@ static void updateHeartRate() {
   int raw = analogRead(HR_ADC);
   hrRawLatest = raw;
 
-  hrDc = 0.995f * hrDc + 0.005f * raw;
+  // DC removal + low-pass filter
+  hrDc = 0.98f * hrDc + 0.02f * raw;
   float ac = raw - hrDc;
+  hrLp = 0.75f * hrLp + 0.25f * ac;
 
-  hrLp = 0.85f * hrLp + 0.15f * ac;
+  // Push filtered sample into waveform buffer
+  hrWaveBuf[hrWaveHead] = hrLp;
+  hrWaveHead = (hrWaveHead + 1) % HR_WAVE_W;
 
   float mag = fabsf(hrLp);
   if (mag > hrPeak) hrPeak = mag;
-  hrPeak *= 0.995f;
+  hrPeak *= 0.997f;
 
-  float adaptive = hrPeak * 0.50f;
-  if (adaptive < 18.0f) adaptive = 18.0f;
-  if (adaptive > 120.0f) adaptive = 120.0f;
+#if HR_DEBUG
+  static uint32_t lastDbgPrint = 0;
+  if (now - lastDbgPrint >= 50) {  // ~20Hz — readable in Serial Plotter
+    lastDbgPrint = now;
+    Serial.print("raw:"); Serial.print(raw);
+    Serial.print(",hrLp:"); Serial.print(hrLp, 1);
+    Serial.print(",hrPeak:"); Serial.print(hrPeak, 1);
+    Serial.print(",thresh:"); Serial.print(hrPeak * 0.30f, 1);
+    Serial.print(",finger:"); Serial.println(hrPeak >= HR_FINGER_PEAK_MIN ? 1 : 0);
+  }
+#endif
+
+  // No finger: suppress all BPM output and skip beat detection
+  if (hrPeak < HR_FINGER_PEAK_MIN) {
+    currentBPM = 0;
+    displayBPM = 0;
+    lastBeatMs = 0;
+    hrArmed = true;
+    hrPrev = hrLp;
+    return;
+  }
+
+  float adaptive = hrPeak * 0.30f;
+  if (adaptive < 6.0f) adaptive = 6.0f;
+  if (adaptive > 60.0f) adaptive = 60.0f;
   hrThresh = adaptive;
 
   bool risingCross = (hrPrev < hrThresh && hrLp >= hrThresh);
@@ -1138,8 +1340,14 @@ static void updateHeartRate() {
 
     if (lastBeatMs != 0 && ibi >= HR_MIN_IBI_MS && ibi <= HR_MAX_IBI_MS) {
       int bpm = (int)(60000.0f / ibi);
+
       if (bpm >= 40 && bpm <= 190) {
         currentBPM = averageBPM(bpm);
+        displayBPM = currentBPM;
+#if HR_DEBUG
+        Serial.print("*** BEAT ibi="); Serial.print(ibi);
+        Serial.print("ms bpm="); Serial.println(bpm);
+#endif
       }
     }
 
@@ -1147,14 +1355,41 @@ static void updateHeartRate() {
     hrArmed = false;
   }
 
-  if (hrLp < (0.5f * hrThresh)) {
+  if (hrLp < (0.20f * hrThresh)) {
     hrArmed = true;
   }
 
   hrPrev = hrLp;
 
-  if (lastBeatMs != 0 && (now - lastBeatMs) > 3000) {
+  // Keep last visible BPM a little longer after finger is lifted
+  if (lastBeatMs != 0 && (now - lastBeatMs) > 5000) {
     currentBPM = 0;
+  }
+  if (lastBeatMs != 0 && (now - lastBeatMs) > 8000) {
+    displayBPM = 0;
+  }
+}
+
+/* ===================== Time tick ===================== */
+static void updateLocalClock() {
+  if (!timeValid) return;
+
+  uint32_t nowMs = millis();
+  while ((uint32_t)(nowMs - lastMinuteTickMs) >= 60000UL) {
+    lastMinuteTickMs += 60000UL;
+    currentMinute++;
+    if (currentMinute >= 60) {
+      currentMinute = 0;
+      currentHour = (currentHour + 1) % 24;
+    }
+
+    if (timeChar) {
+      timeChar->setValue(currentTimeString().c_str());
+    }
+
+    if (uiMode == UI_WATCH) {
+      updateWatchTime(true);
+    }
   }
 }
 
@@ -1178,11 +1413,8 @@ static void handleModeToggleChord(const char* wakeStr) {
 
       redrawCurrentUI(wakeStr);
 
-      if (uiMode == UI_DEBUG) {
-        bleSend("UI mode: DEBUG");
-      } else {
-        bleSend("UI mode: WATCH");
-      }
+      if (uiMode == UI_DEBUG) bleSend("UI mode: DEBUG");
+      else bleSend("UI mode: WATCH");
 
       Serial.print("UI toggled to: ");
       Serial.println(uiMode == UI_DEBUG ? "DEBUG" : "WATCH");
@@ -1217,6 +1449,13 @@ void setup() {
 
   Wire.begin(I2C_SDA, I2C_SCL);
 
+  batteryGaugeOk = maxlipo.begin();
+  if (!batteryGaugeOk) {
+    Serial.println("MAX17048 not found");
+  } else {
+    Serial.println("MAX17048 OK");
+  }
+
   analogReadResolution(12);
   analogSetPinAttenuation(HR_ADC, ADC_11db);
 
@@ -1227,11 +1466,14 @@ void setup() {
   bleSend("Commubu booted");
 
   resetHeartState();
+  updateHrCharacteristic();
 
   for (int i = 0; i < 100; i++) {
     updateHeartRate();
     delay(10);
   }
+
+  pollBattery();
 
   esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
   const char* causeStr = wakeCauseToStr(cause);
@@ -1240,8 +1482,7 @@ void setup() {
   Serial.println(causeStr);
 
   redrawCurrentUI(causeStr);
-
-  bleSend(String("Wake: ") + causeStr + " | BPM=" + String(currentBPM));
+  bleSend(String("Wake: ") + causeStr + " | BPM=" + String(displayBPM));
 }
 
 /* ===================== Loop ===================== */
@@ -1252,7 +1493,9 @@ void loop() {
 
   updateHeartRate();
   updateLocalClock();
+  updateAnimation();
   applyPendingBleParams();
+  pollBattery();
 
   if (rxPending) {
     String msgCopy;
@@ -1295,31 +1538,56 @@ void loop() {
     bleSend("Button 3: smile.h animation");
   }
 
-  static uint32_t lastAccel = 0;
-  if (millis() - lastAccel >= 40) {
-    lastAccel = millis();
+  static uint32_t lastStepPoll = 0;
+  if (millis() - lastStepPoll >= 40) {
+    lastStepPoll = millis();
     bool didStep = false;
     accelStepUpdate(didStep);
 
+    if (uiMode == UI_DEBUG) updateDebugAccelOnTFT();
+
     if (didStep) {
-      updateUiStepsOnly();
-      bleSend("Step! count=" + String(stepsNew));
+      if (uiMode == UI_DEBUG) updateDebugStepsOnTFT();
+      else drawWatchStatsValues(false);
+
       lastActivity = millis();
+      bleSend("Step! count=" + String(stepsNew));
     }
   }
 
-  updateAnimation();
+  static uint32_t lastStatsUi = 0;
+  if (millis() - lastStatsUi >= 250) {
+    lastStatsUi = millis();
 
-  static uint32_t lastUi = 0;
-  if (millis() - lastUi > 250) {
-    lastUi = millis();
-    updateUiFast();
+    if (uiMode == UI_DEBUG) {
+      updateDebugHRonTFT();
+      updateDebugStepsOnTFT();
+    } else {
+      drawWatchStatsValues(false);
+      updateWatchName(false);
+      updateWatchTime(false);
+    }
+  }
+
+  if (uiMode == UI_WATCH) {
+    updateMusicBar(false);
+
+    static uint32_t lastWaveMs = 0;
+    if (millis() - lastWaveMs >= 25) {
+      lastWaveMs = millis();
+      drawHrWaveform();
+    }
   }
 
   static uint32_t lastBleHr = 0;
   if (millis() - lastBleHr > 1000) {
     lastBleHr = millis();
-    bleSend("BPM=" + String(currentBPM) + " ADC=" + String(hrRawLatest));
+
+    updateHrCharacteristic();
+
+    bleSend("BPM=" + String(displayBPM) +
+            " Batt=" + String(batteryPercent) + "%" +
+            " V=" + String(batteryVoltage, 2));
   }
 
   if (!bleConnected && (millis() - lastActivity > SLEEP_IDLE_MS)) {
