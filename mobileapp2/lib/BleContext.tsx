@@ -6,7 +6,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Platform } from 'react-native';
+import { NativeModules } from 'react-native';
 import { BleManager, Device, Subscription } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
 
@@ -73,8 +73,13 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     heartRate: null, steps: null, calories: null, distance: null,
   });
 
-  // Init BleManager once
+  // Init BleManager once (Expo Go / web may not include native BLE module)
   useEffect(() => {
+    if (!NativeModules.BleClientManager) {
+      console.log('BLE not available in Expo Go');
+      return;
+    }
+
     managerRef.current = new BleManager();
     return () => {
       cleanupRefs();
