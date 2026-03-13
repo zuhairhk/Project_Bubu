@@ -26,7 +26,7 @@ struct Animation {
 static const Animation testAnim  = { test_anim,  test_frame_count,  test_delay };
 static const Animation sleepAnim = { sleep_anim, sleep_frame_count, sleep_delay };
 static const Animation smileAnim = { smile_anim, smile_frame_count, smile_delay };
-static const Animation* activeAnim = &testAnim;
+static const Animation* activeAnim = &smileAnim;
 
 // Animation state variables
 static uint8_t  animFrame  = 0;
@@ -128,7 +128,10 @@ static NimBLEUUID CHAR_UUID_NAME  ("6E400004-B5A3-F393-E0A9-E50E24DCCA9E");
 static NimBLEUUID CHAR_UUID_SONG  ("6E400005-B5A3-F393-E0A9-E50E24DCCA9E");
 static NimBLEUUID CHAR_UUID_ARTIST("6E400006-B5A3-F393-E0A9-E50E24DCCA9E");
 static NimBLEUUID CHAR_UUID_TIME  ("6E400007-B5A3-F393-E0A9-E50E24DCCA9E"); // write HH:MM
-static NimBLEUUID CHAR_UUID_HR    ("6E400008-B5A3-F393-E0A9-E50E24DCCA9E"); // dedicated HR read/notify
+static NimBLEUUID CHAR_UUID_HR          ("6E400008-B5A3-F393-E0A9-E50E24DCCA9E"); // dedicated HR read/notify
+static NimBLEUUID CHAR_UUID_TRACKS      ("6E400009-B5A3-F393-E0A9-E50E24DCCA9E"); // top tracks: newline-separated "Song - Artist"
+static NimBLEUUID CHAR_UUID_TRANSIT_LINE("6E40000A-B5A3-F393-E0A9-E50E24DCCA9E"); // GO Transit line name
+static NimBLEUUID CHAR_UUID_TRANSIT_TIME("6E40000B-B5A3-F393-E0A9-E50E24DCCA9E"); // departure time "HH:MM"
 
 static NimBLEServer*         bleServer  = nullptr;
 static NimBLECharacteristic* txChar     = nullptr;
@@ -137,7 +140,10 @@ static NimBLECharacteristic* nameChar   = nullptr;
 static NimBLECharacteristic* songChar   = nullptr;
 static NimBLECharacteristic* artistChar = nullptr;
 static NimBLECharacteristic* timeChar   = nullptr;
-static NimBLECharacteristic* hrChar     = nullptr;
+static NimBLECharacteristic* hrChar          = nullptr;
+static NimBLECharacteristic* tracksChar      = nullptr;
+static NimBLECharacteristic* transitLineChar = nullptr;
+static NimBLECharacteristic* transitTimeChar = nullptr;
 static volatile bool bleConnected = false;
 
 static portMUX_TYPE rxMux = portMUX_INITIALIZER_UNLOCKED;
@@ -148,17 +154,32 @@ static String rxMessage;
 static volatile bool bleNamePending   = false;
 static volatile bool bleSongPending   = false;
 static volatile bool bleArtistPending = false;
-static volatile bool bleTimePending   = false;
+static volatile bool bleTimePending        = false;
+static volatile bool bleTracksPending      = false;
+static volatile bool bleTransitLinePending = false;
+static volatile bool bleTransitTimePending = false;
 
 static String pendingName;
 static String pendingSong;
 static String pendingArtist;
 static String pendingTime;
+static String pendingTracks;
+static String pendingTransitLine;
+static String pendingTransitTime;
 
 /* ===================== Parameterized watch content ===================== */
 static String displayName = "Commubu";
 static String currentSongTitle = "Let It Happen";
 static String currentArtist    = "Tame Impala";
+
+// Music screen – mood-based top tracks (newline-separated "Song - Artist")
+static String topTracksRaw  = "";
+static String topTracks[10];
+static int    topTrackCount = 0;
+
+// Commute screen – GO Transit data
+static String transitLine      = "GO Transit";
+static String transitDeparture = "--:--";
 
 static String currentTrackLine() {
   if (currentSongTitle.length() == 0 && currentArtist.length() == 0) return "";
@@ -205,8 +226,10 @@ static void setCurrentTimeFromString(const String& s) {
 
 /* ===================== UI mode ===================== */
 enum UiMode {
-  UI_WATCH = 0,
-  UI_DEBUG = 1
+  UI_WATCH   = 0,
+  UI_DEBUG   = 1,
+  UI_MUSIC   = 2,
+  UI_COMMUTE = 3
 };
 
 static UiMode uiMode = START_IN_DEBUG_MODE ? UI_DEBUG : UI_WATCH;
@@ -277,6 +300,8 @@ static void drawFaceRegion();
 static void applyPendingBleParams();
 static void pollBattery();
 static void updateHrCharacteristic();
+static void drawMusicUI();
+static void drawCommuteUI();
 
 /* ===================== Helpers ===================== */
 static int averageBPM(int newBpm) {
@@ -535,6 +560,50 @@ public:
   }
 };
 
+class TracksCallbacks : public NimBLECharacteristicCallbacks {
+public:
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
+    (void)connInfo;
+    std::string v = c->getValue();
+    if (v.empty()) return;
+    String s = String(v.c_str());
+    portENTER_CRITICAL(&rxMux);
+    pendingTracks = s;
+    bleTracksPending = true;
+    portEXIT_CRITICAL(&rxMux);
+  }
+};
+
+class TransitLineCallbacks : public NimBLECharacteristicCallbacks {
+public:
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
+    (void)connInfo;
+    std::string v = c->getValue();
+    if (v.empty()) return;
+    String s = String(v.c_str());
+    s.trim();
+    portENTER_CRITICAL(&rxMux);
+    pendingTransitLine = s;
+    bleTransitLinePending = true;
+    portEXIT_CRITICAL(&rxMux);
+  }
+};
+
+class TransitTimeCallbacks : public NimBLECharacteristicCallbacks {
+public:
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
+    (void)connInfo;
+    std::string v = c->getValue();
+    if (v.empty()) return;
+    String s = String(v.c_str());
+    s.trim();
+    portENTER_CRITICAL(&rxMux);
+    pendingTransitTime = s;
+    bleTransitTimePending = true;
+    portEXIT_CRITICAL(&rxMux);
+  }
+};
+
 class ServerCallbacks : public NimBLEServerCallbacks {
 public:
   void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
@@ -605,6 +674,27 @@ static void initBLE() {
     NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
   );
   hrChar->setValue("0");
+
+  tracksChar = svc->createCharacteristic(
+    CHAR_UUID_TRACKS,
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+  );
+  tracksChar->setValue(topTracksRaw.c_str());
+  tracksChar->setCallbacks(new TracksCallbacks());
+
+  transitLineChar = svc->createCharacteristic(
+    CHAR_UUID_TRANSIT_LINE,
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+  );
+  transitLineChar->setValue(transitLine.c_str());
+  transitLineChar->setCallbacks(new TransitLineCallbacks());
+
+  transitTimeChar = svc->createCharacteristic(
+    CHAR_UUID_TRANSIT_TIME,
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+  );
+  transitTimeChar->setValue(transitDeparture.c_str());
+  transitTimeChar->setCallbacks(new TransitTimeCallbacks());
 
   svc->start();
 
@@ -847,18 +937,134 @@ static void updateMusicBar(bool force) {
 }
 
 static void drawWatchFaceStatic() {
-  tft.fillScreen(ST77XX_BLACK);
-
-  drawFaceRegion();
-  updateWatchName(true);
-  updateWatchTime(true);
-
+  // Cover every pixel of the 240x320 screen region by region —
+  // no fillScreen so there is no full-black flash during transitions.
+  drawFaceRegion();                                          // y=0-136 (every pixel)
+  tft.fillRect(0, 137, tft.width(), 13, ST77XX_BLACK);      // y=137-149 gap
+  updateWatchName(true);                                     // y=150-169
+  tft.fillRect(0, 170, tft.width(), 2, ST77XX_BLACK);       // y=170-171 gap
+  updateWatchTime(true);                                     // y=172-213
+  tft.fillRect(0, 214, tft.width(), 38, ST77XX_BLACK);      // y=214-251 (gap + stats label zone)
   drawWatchStatsLabels();
-  drawWatchStatsValues(true);
+  drawWatchStatsValues(true);                                // y=252-285
+  tft.fillRect(0, 286, tft.width(), 2, ST77XX_BLACK);       // y=286-287 gap
+  drawMusicBarFrame();                                       // y=288-319
+  updateMusicBar(true);
+}
 
-  tft.fillRect(0, 274, 240, 12, ST77XX_BLACK);
+/* ===================== Top-tracks parser ===================== */
+static void parseTopTracks() {
+  topTrackCount = 0;
+
+  // Normalize literal two-char "\n" sequences (sent by app) to actual newlines
+  String normalized;
+  normalized.reserve(topTracksRaw.length());
+  for (int i = 0; i < (int)topTracksRaw.length(); i++) {
+    char c = topTracksRaw.charAt(i);
+    if (c == '\\' && i + 1 < (int)topTracksRaw.length() &&
+        topTracksRaw.charAt(i + 1) == 'n') {
+      normalized += '\n';
+      i++; // skip the 'n'
+    } else {
+      normalized += c;
+    }
+  }
+
+  // Split on actual newlines
+  int start = 0;
+  int len = (int)normalized.length();
+  for (int i = 0; i <= len; i++) {
+    if (i == len || normalized.charAt(i) == '\n') {
+      if (i > start) {
+        String t = normalized.substring(start, i);
+        t.trim();
+        if (t.length() > 0 && topTrackCount < 10) {
+          topTracks[topTrackCount++] = t;
+        }
+      }
+      start = i + 1;
+    }
+  }
+}
+
+/* ===================== Music screen UI ===================== */
+static void drawMusicTrackList() {
+  const int16_t listStartY = 32;
+  const int16_t rowH       = 20;
+  const int16_t maxVisible = (musicBarTopY - listStartY) / rowH; // ~12 rows
+
+  // Fill and draw each row individually — avoids a single large black fill
+  // that would cause a visible flash before content appears.
+  for (int i = 0; i < maxVisible; i++) {
+    int16_t rowY = listStartY + i * rowH;
+
+    if (i >= topTrackCount) {
+      // Empty rows: just blank them out
+      tft.fillRect(0, rowY, tft.width(), rowH, ST77XX_BLACK);
+      continue;
+    }
+
+    uint16_t bgCol = (i % 2 == 0) ? (uint16_t)0x2104 : ST77XX_BLACK;
+    tft.fillRect(0, rowY, tft.width(), rowH, bgCol);
+
+    char numBuf[4];
+    snprintf(numBuf, sizeof(numBuf), "%d.", i + 1);
+    tft.setTextSize(1);
+    tft.setTextColor(FACE_GREEN, bgCol);
+    tft.setCursor(4, rowY + 6);
+    tft.print(numBuf);
+
+    String track = topTracks[i];
+    if (track.length() > 27) track = track.substring(0, 26) + "~";
+    tft.setTextColor(ST77XX_WHITE, bgCol);
+    tft.setCursor(24, rowY + 6);
+    tft.print(track);
+  }
+
+  if (topTrackCount == 0) {
+    drawCenteredText("No tracks available", listStartY + 80, 1, ST77XX_WHITE);
+  }
+}
+
+static void drawMusicUI() {
+  // Header region (y=0-31) — fill only this small area, not the whole screen
+  tft.fillRect(0, 0, tft.width(), 28, ST77XX_BLACK);
+  drawCenteredText("Top Tracks", 6, 2, FACE_GREEN);
+  tft.drawFastHLine(0, 28, tft.width(), ST77XX_WHITE);
+  tft.fillRect(0, 29, tft.width(), 3, ST77XX_BLACK);  // y=29-31 gap before rows
+
+  // Track list: drawMusicTrackList fills each row individually (y=32-287)
+  drawMusicTrackList();
+
+  // Now-playing bar at bottom (y=288-319)
   drawMusicBarFrame();
   updateMusicBar(true);
+}
+
+/* ===================== Commute screen UI ===================== */
+static void drawCommuteUI() {
+  // Cover every region of 240x320 without a full-screen clear.
+  // Header y=0-28
+  tft.fillRect(0, 0, tft.width(), 29, ST77XX_BLACK);
+  drawCenteredText("Commute", 6, 2, FACE_GREEN);
+  tft.drawFastHLine(0, 28, tft.width(), ST77XX_WHITE);
+
+  // Line name y=29-104
+  tft.fillRect(0, 29, tft.width(), 76, ST77XX_BLACK);
+  drawCenteredString(transitLine, 55, 2, ST77XX_WHITE);
+  tft.drawFastHLine(20, 105, tft.width() - 40, ST77XX_WHITE);
+
+  // "Next Departure" label y=106-139
+  tft.fillRect(0, 106, tft.width(), 34, ST77XX_BLACK);
+  drawCenteredText("Next Departure:", 118, 1, FACE_GREEN);
+
+  // Departure time y=140-219
+  tft.fillRect(0, 140, tft.width(), 80, ST77XX_BLACK);
+  drawCenteredString(transitDeparture, 155, 4, FACE_GREEN);
+
+  // Remaining bottom area y=220-319
+  tft.fillRect(0, 220, tft.width(), 100, ST77XX_BLACK);
+  tft.drawFastHLine(0, 287, tft.width(), ST77XX_WHITE);
 }
 
 /* ===================== Debug UI ===================== */
@@ -880,7 +1086,7 @@ static void showRxOnTFT_Debug(const String& msg) {
 }
 
 static void drawDebugUI(const char* wakeStr) {
-  tft.fillScreen(ST77XX_BLACK);
+  tft.fillRect(0, 0, tft.width(), tft.height(), ST77XX_BLACK);
 
   tft.setTextWrap(false);
   tft.setTextColor(ST77XX_WHITE);
@@ -997,7 +1203,9 @@ static void updateDebugAccelOnTFT() {
 /* ===================== Pending BLE params ===================== */
 static void applyPendingBleParams() {
   bool doName = false, doSong = false, doArtist = false, doTime = false;
+  bool doTracks = false, doTransitLine = false, doTransitTime = false;
   String newName, newSong, newArtist, newTime;
+  String newTracks, newTransitLine, newTransitTime;
 
   portENTER_CRITICAL(&rxMux);
   if (bleNamePending) {
@@ -1020,6 +1228,21 @@ static void applyPendingBleParams() {
     bleTimePending = false;
     doTime = true;
   }
+  if (bleTracksPending) {
+    newTracks = pendingTracks;
+    bleTracksPending = false;
+    doTracks = true;
+  }
+  if (bleTransitLinePending) {
+    newTransitLine = pendingTransitLine;
+    bleTransitLinePending = false;
+    doTransitLine = true;
+  }
+  if (bleTransitTimePending) {
+    newTransitTime = pendingTransitTime;
+    bleTransitTimePending = false;
+    doTransitTime = true;
+  }
   portEXIT_CRITICAL(&rxMux);
 
   if (doName) {
@@ -1032,14 +1255,14 @@ static void applyPendingBleParams() {
   if (doSong) {
     currentSongTitle = newSong;
     if (songChar) songChar->setValue(currentSongTitle.c_str());
-    if (uiMode == UI_WATCH) updateMusicBar(true);
+    if (uiMode == UI_WATCH || uiMode == UI_MUSIC) updateMusicBar(true);
     bleSend("Song=" + currentSongTitle);
   }
 
   if (doArtist) {
     currentArtist = newArtist;
     if (artistChar) artistChar->setValue(currentArtist.c_str());
-    if (uiMode == UI_WATCH) updateMusicBar(true);
+    if (uiMode == UI_WATCH || uiMode == UI_MUSIC) updateMusicBar(true);
     bleSend("Artist=" + currentArtist);
   }
 
@@ -1054,24 +1277,58 @@ static void applyPendingBleParams() {
       bleSend("Time write invalid, use HH:MM");
     }
   }
+
+  if (doTracks) {
+    topTracksRaw = newTracks;
+    if (tracksChar) tracksChar->setValue(topTracksRaw.c_str());
+    parseTopTracks();
+    if (uiMode == UI_MUSIC) {
+      drawMusicTrackList();
+    }
+    bleSend("Tracks updated, count=" + String(topTrackCount));
+  }
+
+  if (doTransitLine) {
+    transitLine = newTransitLine;
+    if (transitLineChar) transitLineChar->setValue(transitLine.c_str());
+    if (uiMode == UI_COMMUTE) drawCommuteUI();
+    bleSend("TransitLine=" + transitLine);
+  }
+
+  if (doTransitTime) {
+    transitDeparture = newTransitTime;
+    if (transitTimeChar) transitTimeChar->setValue(transitDeparture.c_str());
+    if (uiMode == UI_COMMUTE) drawCommuteUI();
+    bleSend("TransitTime=" + transitDeparture);
+  }
 }
 
 /* ===================== UI dispatch ===================== */
 static void redrawCurrentUI(const char* wakeStr) {
-  if (uiMode == UI_DEBUG) {
-    drawDebugUI(wakeStr);
-  } else {
-    invalidateWatchCache();
-    drawWatchFaceStatic();
+  switch (uiMode) {
+    case UI_DEBUG:
+      drawDebugUI(wakeStr);
+      break;
+    case UI_MUSIC:
+      drawMusicUI();
+      break;
+    case UI_COMMUTE:
+      drawCommuteUI();
+      break;
+    default:
+      invalidateWatchCache();
+      drawWatchFaceStatic();
+      break;
   }
 }
 
 static void showRxOnTFT(const String& msg) {
   if (uiMode == UI_DEBUG) {
     showRxOnTFT_Debug(msg);
-  } else {
+  } else if (uiMode == UI_WATCH) {
     drawWatchRxArea(msg);
   }
+  // UI_MUSIC and UI_COMMUTE: no RX overlay
 }
 
 /* ===================== Wake helpers ===================== */
@@ -1427,23 +1684,27 @@ void loop() {
 
   handleModeToggleChord(causeStr);
 
-  // Button 1: test.h animation
+  // Button 1 (leftmost): Music screen
   if (b1.fell()) {
-    setAnimation(&testAnim);
+    uiMode = UI_MUSIC;
+    drawMusicUI();
     lastActivity = millis();
-    bleSend("Button 1: test.h animation");
+    bleSend("UI: Music");
   }
-  // Button 2: sleep.h animation
+  // Button 2 (middle): Home / Watch face
   if (b2.fell()) {
-    setAnimation(&sleepAnim);
+    uiMode = UI_WATCH;
+    invalidateWatchCache();
+    drawWatchFaceStatic();
     lastActivity = millis();
-    bleSend("Button 2: sleep.h animation");
+    bleSend("UI: Home");
   }
-  // Button 3: smile.h animation
+  // Button 3 (rightmost): Commute screen
   if (b3.fell()) {
-    setAnimation(&smileAnim);
+    uiMode = UI_COMMUTE;
+    drawCommuteUI();
     lastActivity = millis();
-    bleSend("Button 3: smile.h animation");
+    bleSend("UI: Commute");
   }
 
   static uint32_t lastStepPoll = 0;
@@ -1470,14 +1731,14 @@ void loop() {
     if (uiMode == UI_DEBUG) {
       updateDebugHRonTFT();
       updateDebugStepsOnTFT();
-    } else {
+    } else if (uiMode == UI_WATCH) {
       drawWatchStatsValues(false);
       updateWatchName(false);
       updateWatchTime(false);
     }
   }
 
-  if (uiMode == UI_WATCH) {
+  if (uiMode == UI_WATCH || uiMode == UI_MUSIC) {
     updateMusicBar(false);
   }
 
