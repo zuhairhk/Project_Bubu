@@ -99,3 +99,6 @@ Icon?
 
 # --- VS Code workspace history ---
 .history/
+
+# --- PCB backups ---
+PCB/PCB-backups/
