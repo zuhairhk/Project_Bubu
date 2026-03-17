@@ -1,8 +1,4 @@
 #include <Arduino.h>
-// For code clarity: wake on any pin low
-#ifndef ESP_EXT1_WAKEUP_ANY_LOW
-#define ESP_EXT1_WAKEUP_ANY_LOW ((esp_sleep_ext1_wakeup_mode_t)0)
-#endif
 #include <Wire.h>
 #include <SPI.h>
 #include <math.h>
@@ -30,7 +26,7 @@ struct Animation {
 static const Animation testAnim  = { test_anim,  test_frame_count,  test_delay };
 static const Animation sleepAnim = { sleep_anim, sleep_frame_count, sleep_delay };
 static const Animation smileAnim = { smile_anim, smile_frame_count, smile_delay };
-static const Animation* activeAnim = &testAnim;
+static const Animation* activeAnim = &smileAnim;
 
 // Animation state variables
 static uint8_t  animFrame  = 0;
@@ -75,6 +71,8 @@ int stepsNew = 0;
 bool stateOld = false;
 bool stateNew = false;
 unsigned long lastStepTime = 0;
+unsigned long lastRawDetectMs = 0;
+static const unsigned long MAX_STEP_INTERVAL_MS = 1500;
 
 // For display/debug
 float lastAx = 0.0f, lastAy = 0.0f, lastAz = 0.0f;
@@ -132,7 +130,10 @@ static NimBLEUUID CHAR_UUID_NAME  ("6E400004-B5A3-F393-E0A9-E50E24DCCA9E");
 static NimBLEUUID CHAR_UUID_SONG  ("6E400005-B5A3-F393-E0A9-E50E24DCCA9E");
 static NimBLEUUID CHAR_UUID_ARTIST("6E400006-B5A3-F393-E0A9-E50E24DCCA9E");
 static NimBLEUUID CHAR_UUID_TIME  ("6E400007-B5A3-F393-E0A9-E50E24DCCA9E"); // write HH:MM
-static NimBLEUUID CHAR_UUID_HR    ("6E400008-B5A3-F393-E0A9-E50E24DCCA9E"); // dedicated HR read/notify
+static NimBLEUUID CHAR_UUID_HR          ("6E400008-B5A3-F393-E0A9-E50E24DCCA9E"); // dedicated HR read/notify
+static NimBLEUUID CHAR_UUID_TRACKS      ("6E400009-B5A3-F393-E0A9-E50E24DCCA9E"); // top tracks: newline-separated "Song - Artist"
+static NimBLEUUID CHAR_UUID_TRANSIT_LINE("6E40000A-B5A3-F393-E0A9-E50E24DCCA9E"); // GO Transit line name
+static NimBLEUUID CHAR_UUID_TRANSIT_TIME("6E40000B-B5A3-F393-E0A9-E50E24DCCA9E"); // departure time "HH:MM"
 
 static NimBLEServer*         bleServer  = nullptr;
 static NimBLECharacteristic* txChar     = nullptr;
@@ -141,7 +142,10 @@ static NimBLECharacteristic* nameChar   = nullptr;
 static NimBLECharacteristic* songChar   = nullptr;
 static NimBLECharacteristic* artistChar = nullptr;
 static NimBLECharacteristic* timeChar   = nullptr;
-static NimBLECharacteristic* hrChar     = nullptr;
+static NimBLECharacteristic* hrChar          = nullptr;
+static NimBLECharacteristic* tracksChar      = nullptr;
+static NimBLECharacteristic* transitLineChar = nullptr;
+static NimBLECharacteristic* transitTimeChar = nullptr;
 static volatile bool bleConnected = false;
 
 static portMUX_TYPE rxMux = portMUX_INITIALIZER_UNLOCKED;
@@ -152,17 +156,32 @@ static String rxMessage;
 static volatile bool bleNamePending   = false;
 static volatile bool bleSongPending   = false;
 static volatile bool bleArtistPending = false;
-static volatile bool bleTimePending   = false;
+static volatile bool bleTimePending        = false;
+static volatile bool bleTracksPending      = false;
+static volatile bool bleTransitLinePending = false;
+static volatile bool bleTransitTimePending = false;
 
 static String pendingName;
 static String pendingSong;
 static String pendingArtist;
 static String pendingTime;
+static String pendingTracks;
+static String pendingTransitLine;
+static String pendingTransitTime;
 
 /* ===================== Parameterized watch content ===================== */
 static String displayName = "Commubu";
 static String currentSongTitle = "Let It Happen";
 static String currentArtist    = "Tame Impala";
+
+// Music screen – mood-based top tracks (newline-separated "Song - Artist")
+static String topTracksRaw  = "";
+static String topTracks[10];
+static int    topTrackCount = 0;
+
+// Commute screen – GO Transit data
+static String transitLine      = "GO Transit";
+static String transitDeparture = "--:--";
 
 static String currentTrackLine() {
   if (currentSongTitle.length() == 0 && currentArtist.length() == 0) return "";
@@ -209,8 +228,10 @@ static void setCurrentTimeFromString(const String& s) {
 
 /* ===================== UI mode ===================== */
 enum UiMode {
-  UI_WATCH = 0,
-  UI_DEBUG = 1
+  UI_WATCH   = 0,
+  UI_DEBUG   = 1,
+  UI_MUSIC   = 2,
+  UI_COMMUTE = 3
 };
 
 static UiMode uiMode = START_IN_DEBUG_MODE ? UI_DEBUG : UI_WATCH;
@@ -236,29 +257,14 @@ static const int16_t musicTextW = 240 - musicTextX - 4;
 
 static int16_t musicScrollX = 0;
 static uint32_t lastMusicScrollMs = 0;
-static const uint32_t MUSIC_SCROLL_INTERVAL_MS = 140;
-static const int16_t MUSIC_SCROLL_STEP = 2;
-static const int16_t MUSIC_GAP_PX = 20;
+static const uint32_t MUSIC_SCROLL_INTERVAL_MS = 33;
+static const int16_t MUSIC_SCROLL_STEP = 1;
+static const int16_t MUSIC_GAP_PX = 60;
 
 /* ===================== Heart-rate processing ===================== */
-// Set to 1 to print raw/filtered/peak values to Serial (use Serial Plotter)
-#define HR_DEBUG 1
-
 static const uint32_t HR_SAMPLE_MS  = 10;
 static const uint32_t HR_MIN_IBI_MS = 300;
 static const uint32_t HR_MAX_IBI_MS = 2000;
-// Minimum signal peak required to consider a finger is present.
-// Below this, all BPM output is suppressed. Tune up if you still see
-// false readings with no finger, or down if detection is too slow to start.
-static const float HR_FINGER_PEAK_MIN = 15.0f;
-
-/* ---- Waveform strip (above BPM, middle column) ---- */
-static const int16_t HR_WAVE_X = 80;   // left edge of middle column
-static const int16_t HR_WAVE_W = 80;   // one column wide
-static const int16_t HR_WAVE_Y = 218;  // just below the time display
-static const int16_t HR_WAVE_H = 10;   // strip height in pixels
-static float    hrWaveBuf[HR_WAVE_W];  // circular buffer of hrLp samples
-static uint8_t  hrWaveHead = 0;        // write pointer
 
 float hrDc = 0.0f;
 float hrLp = 0.0f;
@@ -278,6 +284,18 @@ int bpmHist[BPM_AVG_COUNT] = {0};
 int bpmHistIdx = 0;
 int bpmHistUsed = 0;
 
+// Finger-on-sensor detection
+static bool fingerOn = false;
+static uint32_t fingerLowMs = 0;
+static const float FINGER_ON_THRESH  = 30.0f;  // hrPeak must exceed this to confirm finger
+static const float FINGER_OFF_THRESH = 12.0f;  // hrPeak must drop below this to lose finger
+static const uint32_t FINGER_OFF_DEBOUNCE_MS = 1500; // ms hrPeak must stay low before clearing
+
+// HR waveform display buffer (one sample per HR_SAMPLE_MS, wraps circularly)
+static const int HR_WAVE_SIZE = 240;
+static int16_t hrWaveBuf[HR_WAVE_SIZE];
+static int hrWaveIdx = 0;
+
 /* ===================== Cached watch UI values ===================== */
 static int lastDrawnSteps = -1;
 static int lastDrawnBPM = -999;
@@ -296,6 +314,9 @@ static void drawFaceRegion();
 static void applyPendingBleParams();
 static void pollBattery();
 static void updateHrCharacteristic();
+static void drawMusicUI();
+static void drawCommuteUI();
+static void drawHrWaveform();
 
 /* ===================== Helpers ===================== */
 static int averageBPM(int newBpm) {
@@ -323,9 +344,6 @@ static void resetHeartState() {
   for (int i = 0; i < BPM_AVG_COUNT; i++) bpmHist[i] = 0;
   bpmHistIdx = 0;
   bpmHistUsed = 0;
-
-  for (int i = 0; i < HR_WAVE_W; i++) hrWaveBuf[i] = 0.0f;
-  hrWaveHead = 0;
 }
 
 static void invalidateWatchCache() {
@@ -557,6 +575,50 @@ public:
   }
 };
 
+class TracksCallbacks : public NimBLECharacteristicCallbacks {
+public:
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
+    (void)connInfo;
+    std::string v = c->getValue();
+    if (v.empty()) return;
+    String s = String(v.c_str());
+    portENTER_CRITICAL(&rxMux);
+    pendingTracks = s;
+    bleTracksPending = true;
+    portEXIT_CRITICAL(&rxMux);
+  }
+};
+
+class TransitLineCallbacks : public NimBLECharacteristicCallbacks {
+public:
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
+    (void)connInfo;
+    std::string v = c->getValue();
+    if (v.empty()) return;
+    String s = String(v.c_str());
+    s.trim();
+    portENTER_CRITICAL(&rxMux);
+    pendingTransitLine = s;
+    bleTransitLinePending = true;
+    portEXIT_CRITICAL(&rxMux);
+  }
+};
+
+class TransitTimeCallbacks : public NimBLECharacteristicCallbacks {
+public:
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
+    (void)connInfo;
+    std::string v = c->getValue();
+    if (v.empty()) return;
+    String s = String(v.c_str());
+    s.trim();
+    portENTER_CRITICAL(&rxMux);
+    pendingTransitTime = s;
+    bleTransitTimePending = true;
+    portEXIT_CRITICAL(&rxMux);
+  }
+};
+
 class ServerCallbacks : public NimBLEServerCallbacks {
 public:
   void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
@@ -627,6 +689,27 @@ static void initBLE() {
     NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
   );
   hrChar->setValue("0");
+
+  tracksChar = svc->createCharacteristic(
+    CHAR_UUID_TRACKS,
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+  );
+  tracksChar->setValue(topTracksRaw.c_str());
+  tracksChar->setCallbacks(new TracksCallbacks());
+
+  transitLineChar = svc->createCharacteristic(
+    CHAR_UUID_TRANSIT_LINE,
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+  );
+  transitLineChar->setValue(transitLine.c_str());
+  transitLineChar->setCallbacks(new TransitLineCallbacks());
+
+  transitTimeChar = svc->createCharacteristic(
+    CHAR_UUID_TRANSIT_TIME,
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+  );
+  transitTimeChar->setValue(transitDeparture.c_str());
+  transitTimeChar->setCallbacks(new TransitTimeCallbacks());
 
   svc->start();
 
@@ -734,27 +817,6 @@ static void drawMusicBarFrame() {
   tft.drawFastHLine(0, musicBarTopY, tft.width(), ST77XX_WHITE);
 }
 
-static void drawHrWaveform() {
-  if (uiMode != UI_WATCH) return;
-
-  float scale = (hrPeak > 1.0f) ? (float)(HR_WAVE_H / 2 - 1) / hrPeak : 0.0f;
-  int16_t midY = HR_WAVE_Y + HR_WAVE_H / 2;
-
-  for (int16_t i = 0; i < HR_WAVE_W; i++) {
-    int idx = (hrWaveHead + i) % HR_WAVE_W;
-    float v  = hrWaveBuf[idx];
-    int16_t x = HR_WAVE_X + i;
-
-    tft.drawFastVLine(x, HR_WAVE_Y, HR_WAVE_H, ST77XX_BLACK);
-
-    int16_t dy = (int16_t)(v * scale);
-    dy = constrain(dy, -(HR_WAVE_H / 2 - 1), HR_WAVE_H / 2 - 1);
-    // Brightest pixel at signal point; dimmer center baseline
-    tft.drawPixel(x, midY, 0x2104);           // faint grey baseline
-    tft.drawPixel(x, midY - dy, ST77XX_WHITE); // signal
-  }
-}
-
 static void drawWatchStatsLabels() {
   const int16_t w = tft.width();
   const int16_t colW = w / 3;
@@ -767,14 +829,8 @@ static void drawWatchStatsLabels() {
 static void updateWatchName(bool force) {
   if (!force && lastDrawnName == displayName) return;
 
-  int16_t newW = stringWidth(displayName, 2);
-  int16_t newX = (tft.width() - newW) / 2;
-  // Draw text in-place (bg colour overwrites old pixels in the overlap zone)
+  tft.fillRect(0, 150, tft.width(), 20, ST77XX_BLACK);
   drawCenteredString(displayName, 155, 2, FACE_GREEN);
-  // Clear only the margins left over from a longer previous name
-  if (newX > 0)
-    tft.fillRect(0, 150, newX, 20, ST77XX_BLACK);
-  tft.fillRect(newX + newW, 150, tft.width() - (newX + newW), 20, ST77XX_BLACK);
 
   lastDrawnName = displayName;
 }
@@ -880,49 +936,191 @@ static void updateMusicBar(bool force) {
   if (!force) {
     lastMusicScrollMs = now;
     musicScrollX += MUSIC_SCROLL_STEP;
-    if (musicScrollX >= (textW + MUSIC_GAP_PX)) {
+    if (musicScrollX > (textW + MUSIC_GAP_PX)) {
       musicScrollX = 0;
     }
   }
 
+  tft.fillRect(0, musicBarTopY + 2, tft.width(), musicBarHeight - 4, ST77XX_BLACK);
   tft.setTextWrap(false);
   tft.setTextSize(musicTextSize);
   tft.setTextColor(FACE_GREEN, ST77XX_BLACK);
 
   int16_t drawX = musicTextX - musicScrollX;
-
-  // First copy — use actual cursor X after print as the true text end
   tft.setCursor(drawX, musicBarTextY);
   tft.print(track);
-  int16_t actualEnd = tft.getCursorX();
-
-  // Second copy starts after the real end of the first copy + gap
-  int16_t drawX2 = actualEnd + MUSIC_GAP_PX;
-  tft.setCursor(drawX2, musicBarTextY);
+  // Second copy for seamless circular loop
+  tft.setCursor(drawX + textW + MUSIC_GAP_PX, musicBarTextY);
   tft.print(track);
+}
 
-  // Clear only the gap between the two copies
-  int16_t barRight = musicTextX + musicTextW;
-  int16_t gapStart = max(actualEnd, (int16_t)musicTextX);
-  int16_t gapEnd   = min(drawX2, barRight);
-  if (gapEnd > gapStart) {
-    tft.fillRect(gapStart, musicBarTopY + 2, gapEnd - gapStart, musicBarHeight - 4, ST77XX_BLACK);
+static void drawHrWaveform() {
+  // Draw only in the center BPM column (x=80-159, 80px wide)
+  const int16_t gX = 80;
+  const int16_t gW = 80;
+  const int16_t gY = 215;
+  const int16_t gH = 22;
+
+  tft.fillRect(gX, gY, gW, gH, ST77XX_BLACK);
+
+  // Only draw waveform when a finger is detected
+  if (!fingerOn) return;
+
+  // Auto-scale over the last gW samples
+  int16_t vMin = 0, vMax = 0;
+  for (int i = 0; i < gW; i++) {
+    int idx = (hrWaveIdx - gW + i + HR_WAVE_SIZE) % HR_WAVE_SIZE;
+    if (i == 0) { vMin = vMax = hrWaveBuf[idx]; }
+    else {
+      if (hrWaveBuf[idx] < vMin) vMin = hrWaveBuf[idx];
+      if (hrWaveBuf[idx] > vMax) vMax = hrWaveBuf[idx];
+    }
+  }
+  int16_t range = vMax - vMin;
+  if (range < 4) range = 4;
+
+  // Draw oldest→newest left→right inside the center column
+  for (int x = 0; x < gW; x++) {
+    int idx = (hrWaveIdx - gW + x + HR_WAVE_SIZE) % HR_WAVE_SIZE;
+    int16_t val = hrWaveBuf[idx];
+    int16_t y = gY + gH - 1 - (int16_t)((int32_t)(val - vMin) * (gH - 1) / range);
+    if (y < gY) y = gY;
+    if (y >= gY + gH) y = gY + gH - 1;
+    tft.drawPixel(gX + x, y, FACE_GREEN);
   }
 }
 
 static void drawWatchFaceStatic() {
-  tft.fillScreen(ST77XX_BLACK);
-
-  drawFaceRegion();
-  updateWatchName(true);
-  updateWatchTime(true);
-
+  // Cover every pixel of the 240x320 screen region by region —
+  // no fillScreen so there is no full-black flash during transitions.
+  drawFaceRegion();                                          // y=0-136 (every pixel)
+  tft.fillRect(0, 137, tft.width(), 13, ST77XX_BLACK);      // y=137-149 gap
+  updateWatchName(true);                                     // y=150-169
+  tft.fillRect(0, 170, tft.width(), 2, ST77XX_BLACK);       // y=170-171 gap
+  updateWatchTime(true);                                     // y=172-213
+  tft.fillRect(0, 214, tft.width(), 24, ST77XX_BLACK);      // y=214-237 gap (graph zone)
+  drawHrWaveform();                                          // y=215-236 HR waveform
+  tft.fillRect(0, 237, tft.width(), 15, ST77XX_BLACK);      // y=237-251 stats label zone
   drawWatchStatsLabels();
-  drawWatchStatsValues(true);
+  drawWatchStatsValues(true);                                // y=252-285
+  tft.fillRect(0, 286, tft.width(), 2, ST77XX_BLACK);       // y=286-287 gap
+  drawMusicBarFrame();                                       // y=288-319
+  updateMusicBar(true);
+}
 
-  tft.fillRect(0, 274, 240, 12, ST77XX_BLACK);
+/* ===================== Top-tracks parser ===================== */
+static void parseTopTracks() {
+  topTrackCount = 0;
+
+  // Normalize literal two-char "\n" sequences (sent by app) to actual newlines
+  String normalized;
+  normalized.reserve(topTracksRaw.length());
+  for (int i = 0; i < (int)topTracksRaw.length(); i++) {
+    char c = topTracksRaw.charAt(i);
+    if (c == '\\' && i + 1 < (int)topTracksRaw.length() &&
+        topTracksRaw.charAt(i + 1) == 'n') {
+      normalized += '\n';
+      i++; // skip the 'n'
+    } else {
+      normalized += c;
+    }
+  }
+
+  // Split on actual newlines
+  int start = 0;
+  int len = (int)normalized.length();
+  for (int i = 0; i <= len; i++) {
+    if (i == len || normalized.charAt(i) == '\n') {
+      if (i > start) {
+        String t = normalized.substring(start, i);
+        t.trim();
+        if (t.length() > 0 && topTrackCount < 10) {
+          topTracks[topTrackCount++] = t;
+        }
+      }
+      start = i + 1;
+    }
+  }
+}
+
+/* ===================== Music screen UI ===================== */
+static void drawMusicTrackList() {
+  const int16_t listStartY = 32;
+  const int16_t rowH       = 20;
+  const int16_t maxVisible = (musicBarTopY - listStartY) / rowH; // ~12 rows
+
+  // Fill and draw each row individually — avoids a single large black fill
+  // that would cause a visible flash before content appears.
+  for (int i = 0; i < maxVisible; i++) {
+    int16_t rowY = listStartY + i * rowH;
+
+    if (i >= topTrackCount) {
+      // Empty rows: just blank them out
+      tft.fillRect(0, rowY, tft.width(), rowH, ST77XX_BLACK);
+      continue;
+    }
+
+    uint16_t bgCol = (i % 2 == 0) ? (uint16_t)0x2104 : ST77XX_BLACK;
+    tft.fillRect(0, rowY, tft.width(), rowH, bgCol);
+
+    char numBuf[4];
+    snprintf(numBuf, sizeof(numBuf), "%d.", i + 1);
+    tft.setTextSize(1);
+    tft.setTextColor(FACE_GREEN, bgCol);
+    tft.setCursor(4, rowY + 6);
+    tft.print(numBuf);
+
+    String track = topTracks[i];
+    if (track.length() > 27) track = track.substring(0, 26) + "~";
+    tft.setTextColor(ST77XX_WHITE, bgCol);
+    tft.setCursor(24, rowY + 6);
+    tft.print(track);
+  }
+
+  if (topTrackCount == 0) {
+    drawCenteredText("No tracks available", listStartY + 80, 1, ST77XX_WHITE);
+  }
+}
+
+static void drawMusicUI() {
+  // Header region (y=0-31) — fill only this small area, not the whole screen
+  tft.fillRect(0, 0, tft.width(), 28, ST77XX_BLACK);
+  drawCenteredText("Top Tracks", 6, 2, FACE_GREEN);
+  tft.drawFastHLine(0, 28, tft.width(), ST77XX_WHITE);
+  tft.fillRect(0, 29, tft.width(), 3, ST77XX_BLACK);  // y=29-31 gap before rows
+
+  // Track list: drawMusicTrackList fills each row individually (y=32-287)
+  drawMusicTrackList();
+
+  // Now-playing bar at bottom (y=288-319)
   drawMusicBarFrame();
   updateMusicBar(true);
+}
+
+/* ===================== Commute screen UI ===================== */
+static void drawCommuteUI() {
+  // Cover every region of 240x320 without a full-screen clear.
+  // Header y=0-28
+  tft.fillRect(0, 0, tft.width(), 29, ST77XX_BLACK);
+  drawCenteredText("Commute", 6, 2, FACE_GREEN);
+  tft.drawFastHLine(0, 28, tft.width(), ST77XX_WHITE);
+
+  // Line name y=29-104
+  tft.fillRect(0, 29, tft.width(), 76, ST77XX_BLACK);
+  drawCenteredString(transitLine, 55, 2, ST77XX_WHITE);
+  tft.drawFastHLine(20, 105, tft.width() - 40, ST77XX_WHITE);
+
+  // "Next Departure" label y=106-139
+  tft.fillRect(0, 106, tft.width(), 34, ST77XX_BLACK);
+  drawCenteredText("Next Departure:", 118, 1, FACE_GREEN);
+
+  // Departure time y=140-219
+  tft.fillRect(0, 140, tft.width(), 80, ST77XX_BLACK);
+  drawCenteredString(transitDeparture, 155, 4, FACE_GREEN);
+
+  // Remaining bottom area y=220-319
+  tft.fillRect(0, 220, tft.width(), 100, ST77XX_BLACK);
+  tft.drawFastHLine(0, 287, tft.width(), ST77XX_WHITE);
 }
 
 /* ===================== Debug UI ===================== */
@@ -944,7 +1142,7 @@ static void showRxOnTFT_Debug(const String& msg) {
 }
 
 static void drawDebugUI(const char* wakeStr) {
-  tft.fillScreen(ST77XX_BLACK);
+  tft.fillRect(0, 0, tft.width(), tft.height(), ST77XX_BLACK);
 
   tft.setTextWrap(false);
   tft.setTextColor(ST77XX_WHITE);
@@ -1061,7 +1259,9 @@ static void updateDebugAccelOnTFT() {
 /* ===================== Pending BLE params ===================== */
 static void applyPendingBleParams() {
   bool doName = false, doSong = false, doArtist = false, doTime = false;
+  bool doTracks = false, doTransitLine = false, doTransitTime = false;
   String newName, newSong, newArtist, newTime;
+  String newTracks, newTransitLine, newTransitTime;
 
   portENTER_CRITICAL(&rxMux);
   if (bleNamePending) {
@@ -1084,6 +1284,21 @@ static void applyPendingBleParams() {
     bleTimePending = false;
     doTime = true;
   }
+  if (bleTracksPending) {
+    newTracks = pendingTracks;
+    bleTracksPending = false;
+    doTracks = true;
+  }
+  if (bleTransitLinePending) {
+    newTransitLine = pendingTransitLine;
+    bleTransitLinePending = false;
+    doTransitLine = true;
+  }
+  if (bleTransitTimePending) {
+    newTransitTime = pendingTransitTime;
+    bleTransitTimePending = false;
+    doTransitTime = true;
+  }
   portEXIT_CRITICAL(&rxMux);
 
   if (doName) {
@@ -1096,14 +1311,14 @@ static void applyPendingBleParams() {
   if (doSong) {
     currentSongTitle = newSong;
     if (songChar) songChar->setValue(currentSongTitle.c_str());
-    if (uiMode == UI_WATCH) updateMusicBar(true);
+    if (uiMode == UI_WATCH || uiMode == UI_MUSIC) updateMusicBar(true);
     bleSend("Song=" + currentSongTitle);
   }
 
   if (doArtist) {
     currentArtist = newArtist;
     if (artistChar) artistChar->setValue(currentArtist.c_str());
-    if (uiMode == UI_WATCH) updateMusicBar(true);
+    if (uiMode == UI_WATCH || uiMode == UI_MUSIC) updateMusicBar(true);
     bleSend("Artist=" + currentArtist);
   }
 
@@ -1118,24 +1333,58 @@ static void applyPendingBleParams() {
       bleSend("Time write invalid, use HH:MM");
     }
   }
+
+  if (doTracks) {
+    topTracksRaw = newTracks;
+    if (tracksChar) tracksChar->setValue(topTracksRaw.c_str());
+    parseTopTracks();
+    if (uiMode == UI_MUSIC) {
+      drawMusicTrackList();
+    }
+    bleSend("Tracks updated, count=" + String(topTrackCount));
+  }
+
+  if (doTransitLine) {
+    transitLine = newTransitLine;
+    if (transitLineChar) transitLineChar->setValue(transitLine.c_str());
+    if (uiMode == UI_COMMUTE) drawCommuteUI();
+    bleSend("TransitLine=" + transitLine);
+  }
+
+  if (doTransitTime) {
+    transitDeparture = newTransitTime;
+    if (transitTimeChar) transitTimeChar->setValue(transitDeparture.c_str());
+    if (uiMode == UI_COMMUTE) drawCommuteUI();
+    bleSend("TransitTime=" + transitDeparture);
+  }
 }
 
 /* ===================== UI dispatch ===================== */
 static void redrawCurrentUI(const char* wakeStr) {
-  if (uiMode == UI_DEBUG) {
-    drawDebugUI(wakeStr);
-  } else {
-    invalidateWatchCache();
-    drawWatchFaceStatic();
+  switch (uiMode) {
+    case UI_DEBUG:
+      drawDebugUI(wakeStr);
+      break;
+    case UI_MUSIC:
+      drawMusicUI();
+      break;
+    case UI_COMMUTE:
+      drawCommuteUI();
+      break;
+    default:
+      invalidateWatchCache();
+      drawWatchFaceStatic();
+      break;
   }
 }
 
 static void showRxOnTFT(const String& msg) {
   if (uiMode == UI_DEBUG) {
     showRxOnTFT_Debug(msg);
-  } else {
+  } else if (uiMode == UI_WATCH) {
     drawWatchRxArea(msg);
   }
+  // UI_MUSIC and UI_COMMUTE: no RX overlay
 }
 
 /* ===================== Wake helpers ===================== */
@@ -1211,7 +1460,7 @@ static void enterDeepSleep() {
       (1ULL << BTN2) |
       (1ULL << BTN3);
 
-  esp_sleep_enable_ext1_wakeup(wakeMask, ESP_EXT1_WAKEUP_ANY_LOW); // 0 = wake on any pin low
+  esp_sleep_enable_ext1_wakeup(wakeMask, ESP_EXT1_WAKEUP_ANY_LOW);
 
   Serial.println("Entering deep sleep now.");
   Serial.flush();
@@ -1274,10 +1523,15 @@ static void accelStepUpdate(bool& didNewStep) {
   unsigned long currentTime = millis();
   if (total_new > NEW_THRESH_UP && !stateNew) {
     if (currentTime - lastStepTime > (unsigned long)MIN_STEP_TIME) {
-      stepsNew++;
+      bool confirmedWalk = (lastRawDetectMs != 0 &&
+                            (currentTime - lastRawDetectMs) < MAX_STEP_INTERVAL_MS);
+      lastRawDetectMs = currentTime;
       lastStepTime = currentTime;
       stateNew = true;
-      didNewStep = true;
+      if (confirmedWalk) {
+        stepsNew++;
+        didNewStep = true;
+      }
     }
   } else if (total_new < NEW_THRESH_LOW) {
     stateNew = false;
@@ -1293,40 +1547,20 @@ static void updateHeartRate() {
   int raw = analogRead(HR_ADC);
   hrRawLatest = raw;
 
-  // DC removal + low-pass filter
+  // Faster DC tracking
   hrDc = 0.98f * hrDc + 0.02f * raw;
   float ac = raw - hrDc;
+
+  // Slightly lighter smoothing
   hrLp = 0.75f * hrLp + 0.25f * ac;
 
-  // Push filtered sample into waveform buffer
-  hrWaveBuf[hrWaveHead] = hrLp;
-  hrWaveHead = (hrWaveHead + 1) % HR_WAVE_W;
+  // Store in waveform buffer for display
+  hrWaveBuf[hrWaveIdx] = (int16_t)(hrLp);
+  hrWaveIdx = (hrWaveIdx + 1) % HR_WAVE_SIZE;
 
   float mag = fabsf(hrLp);
   if (mag > hrPeak) hrPeak = mag;
   hrPeak *= 0.997f;
-
-#if HR_DEBUG
-  static uint32_t lastDbgPrint = 0;
-  if (now - lastDbgPrint >= 50) {  // ~20Hz — readable in Serial Plotter
-    lastDbgPrint = now;
-    Serial.print("raw:"); Serial.print(raw);
-    Serial.print(",hrLp:"); Serial.print(hrLp, 1);
-    Serial.print(",hrPeak:"); Serial.print(hrPeak, 1);
-    Serial.print(",thresh:"); Serial.print(hrPeak * 0.30f, 1);
-    Serial.print(",finger:"); Serial.println(hrPeak >= HR_FINGER_PEAK_MIN ? 1 : 0);
-  }
-#endif
-
-  // No finger: suppress all BPM output and skip beat detection
-  if (hrPeak < HR_FINGER_PEAK_MIN) {
-    currentBPM = 0;
-    displayBPM = 0;
-    lastBeatMs = 0;
-    hrArmed = true;
-    hrPrev = hrLp;
-    return;
-  }
 
   float adaptive = hrPeak * 0.30f;
   if (adaptive < 6.0f) adaptive = 6.0f;
@@ -1344,10 +1578,6 @@ static void updateHeartRate() {
       if (bpm >= 40 && bpm <= 190) {
         currentBPM = averageBPM(bpm);
         displayBPM = currentBPM;
-#if HR_DEBUG
-        Serial.print("*** BEAT ibi="); Serial.print(ibi);
-        Serial.print("ms bpm="); Serial.println(bpm);
-#endif
       }
     }
 
@@ -1361,12 +1591,31 @@ static void updateHeartRate() {
 
   hrPrev = hrLp;
 
-  // Keep last visible BPM a little longer after finger is lifted
-  if (lastBeatMs != 0 && (now - lastBeatMs) > 5000) {
-    currentBPM = 0;
+  // Finger detection based on signal amplitude (hrPeak)
+  if (hrPeak > FINGER_ON_THRESH) {
+    fingerOn = true;
+    fingerLowMs = 0;
+  } else if (hrPeak < FINGER_OFF_THRESH) {
+    if (fingerLowMs == 0) fingerLowMs = now;
+    if ((now - fingerLowMs) > FINGER_OFF_DEBOUNCE_MS) {
+      if (fingerOn) {
+        // Finger just removed — reset everything
+        fingerOn = false;
+        displayBPM = 0;
+        currentBPM = 0;
+        lastBeatMs = 0;
+        for (int i = 0; i < BPM_AVG_COUNT; i++) bpmHist[i] = 0;
+        bpmHistIdx = 0;
+        bpmHistUsed = 0;
+      }
+    }
+  } else {
+    // hrPeak in dead-band: don't change fingerLowMs timer
   }
-  if (lastBeatMs != 0 && (now - lastBeatMs) > 8000) {
+
+  if (!fingerOn) {
     displayBPM = 0;
+    currentBPM = 0;
   }
 }
 
@@ -1519,23 +1768,27 @@ void loop() {
 
   handleModeToggleChord(causeStr);
 
-  // Button 1: test.h animation
+  // Button 1 (leftmost): Music screen
   if (b1.fell()) {
-    setAnimation(&testAnim);
+    uiMode = UI_MUSIC;
+    drawMusicUI();
     lastActivity = millis();
-    bleSend("Button 1: test.h animation");
+    bleSend("UI: Music");
   }
-  // Button 2: sleep.h animation
+  // Button 2 (middle): Home / Watch face
   if (b2.fell()) {
-    setAnimation(&sleepAnim);
+    uiMode = UI_WATCH;
+    invalidateWatchCache();
+    drawWatchFaceStatic();
     lastActivity = millis();
-    bleSend("Button 2: sleep.h animation");
+    bleSend("UI: Home");
   }
-  // Button 3: smile.h animation
+  // Button 3 (rightmost): Commute screen
   if (b3.fell()) {
-    setAnimation(&smileAnim);
+    uiMode = UI_COMMUTE;
+    drawCommuteUI();
     lastActivity = millis();
-    bleSend("Button 3: smile.h animation");
+    bleSend("UI: Commute");
   }
 
   static uint32_t lastStepPoll = 0;
@@ -1562,21 +1815,16 @@ void loop() {
     if (uiMode == UI_DEBUG) {
       updateDebugHRonTFT();
       updateDebugStepsOnTFT();
-    } else {
+    } else if (uiMode == UI_WATCH) {
+      drawHrWaveform();
       drawWatchStatsValues(false);
       updateWatchName(false);
       updateWatchTime(false);
     }
   }
 
-  if (uiMode == UI_WATCH) {
+  if (uiMode == UI_WATCH || uiMode == UI_MUSIC) {
     updateMusicBar(false);
-
-    static uint32_t lastWaveMs = 0;
-    if (millis() - lastWaveMs >= 25) {
-      lastWaveMs = millis();
-      drawHrWaveform();
-    }
   }
 
   static uint32_t lastBleHr = 0;
