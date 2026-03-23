@@ -71,11 +71,11 @@ function ProgressBar({ value, max, color }: { value: number; max: number; color:
   const pct = Math.min((value / max) * 100, 100);
   return (
     <View style={styles.progressTrack}>
-      <MotiView
-        from={{ width: '0%' as any }}
-        animate={{ width: `${pct}%` as any }}
-        transition={{ type: 'timing', duration: 800 }}
-        style={[styles.progressFill, { backgroundColor: color }]}
+      <View
+        style={[
+          styles.progressFill,
+          { backgroundColor: color, width: `${pct}%` },
+        ]}
       />
     </View>
   );
