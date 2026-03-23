@@ -6,7 +6,6 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { MotiText, MotiView } from 'moti';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -15,7 +14,6 @@ import WiiButton from '@/components/WiiButton';
 import { useBle, ConnectionStatus } from '@/lib/BleContext';
 import { useMood } from '@/lib/MoodContext';
 
-// ─── Mood config ─────────────────────────────────────────────────────────────
 const MOOD_COLORS: Record<string, readonly [string, string, string]> = {
   happy:   ['#FFF7C2', '#FFE680', '#FFD23F'],
   neutral: ['#F1F5F9', '#E2E8F0', '#CBD5E1'],
@@ -37,7 +35,6 @@ const API_MOOD_MAP: Record<string, string> = {
 const MOODS = ['happy', 'neutral', 'stressed', 'angry', 'sad', 'sleepy'];
 const BACKEND_URL = 'https://ac00-173-35-246-197.ngrok-free.app/api/health';
 
-// ─── Status badge ─────────────────────────────────────────────────────────────
 const STATUS_CONFIG: Record<ConnectionStatus, { label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
   disconnected: { label: 'Disconnected', color: '#94A3B8', icon: 'bluetooth-outline' },
   scanning:     { label: 'Scanning…',    color: '#FBBF24', icon: 'search-outline' },
@@ -73,29 +70,6 @@ function BleStatusBadge() {
   );
 }
 
-// ─── Animated emoji (replaces Lottie) ────────────────────────────────────────
-function AnimatedHero({ mood }: { mood: string | null }) {
-  const emoji = mood ? MOOD_EMOJIS[mood] : '✨';
-  return (
-    <MotiView
-      from={{ scale: 0.8, opacity: 0 }}
-      animate={{ scale: 1, opacity: 1 }}
-      transition={{ type: 'spring', damping: 12 }}
-      key={emoji}
-      style={styles.heroContainer}
-    >
-      <MotiView
-        from={{ translateY: 0 }}
-        animate={{ translateY: -8 }}
-        transition={{ type: 'timing', duration: 1200, loop: true, repeatReverse: true }}
-      >
-        <Text style={styles.heroEmoji}>{emoji}</Text>
-      </MotiView>
-    </MotiView>
-  );
-}
-
-// ─── Main screen ──────────────────────────────────────────────────────────────
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { status, sendMood, data, deviceCustomName } = useBle();
@@ -107,7 +81,6 @@ export default function HomeScreen() {
     setSending(true);
     setLastMood(mood);
     setMood(mood);
-
     try {
       fetch(BACKEND_URL, {
         method: 'POST',
@@ -119,7 +92,6 @@ export default function HomeScreen() {
           timestamp:  new Date().toISOString(),
         }),
       }).catch(() => {});
-
       await sendMood(mood);
     } finally {
       setSending(false);
@@ -130,70 +102,34 @@ export default function HomeScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top + 12 }]}>
-      {/* BLE status badge */}
       <View style={styles.headerRow}>
         <BleStatusBadge />
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Device name from BLE */}
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {deviceCustomName && (
-          <MotiText
-            style={[styles.moodPrompt, { fontSize: 18, color: '#334155', marginBottom: 0 }]}
-            from={{ opacity: 0, translateY: -8 }}
-            animate={{ opacity: 1, translateY: 0 }}
-            transition={{ type: 'timing', duration: 500, delay: 100 }}
-          >
+          <Text style={[styles.moodPrompt, { fontSize: 18, color: '#334155', marginBottom: 0 }]}>
             Device: {deviceCustomName}
-          </MotiText>
+          </Text>
         )}
 
-        {/* Wavy title */}
-        <View style={styles.titleRow}>
-          {title.split('').map((char, i) => (
-            <MotiText
-              key={i}
-              from={{ opacity: 0, translateY: 8 }}
-              animate={{ opacity: 1, translateY: 0 }}
-              transition={{ type: 'timing', duration: 500, delay: i * 40 }}
-              style={styles.title}
-            >
-              {char === ' ' ? '\u00A0' : char}
-            </MotiText>
-          ))}
-        </View>
+        <Text style={styles.title}>{title}</Text>
 
-        {/* Animated emoji hero */}
-        <AnimatedHero mood={lastMood} />
+        <Text style={styles.heroEmoji}>
+          {lastMood ? MOOD_EMOJIS[lastMood] : '✨'}
+        </Text>
 
-        {/* Mood prompt */}
-        <MotiText
-          style={styles.moodPrompt}
-          from={{ opacity: 0, translateY: -8 }}
-          animate={{ opacity: 1, translateY: 0 }}
-          transition={{ type: 'timing', duration: 500, delay: 350 }}
-        >
-          How are you feeling today?
-        </MotiText>
+        <Text style={styles.moodPrompt}>How are you feeling today?</Text>
 
-        {/* Last mood sent */}
         {lastMood && (
-          <MotiView
-            from={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            style={styles.sentBadge}
-          >
+          <View style={styles.sentBadge}>
             <Text style={styles.sentText}>
-              {MOOD_EMOJIS[lastMood]}  Sent <Text style={styles.sentMood}>{lastMood}</Text>
+              {MOOD_EMOJIS[lastMood]}{'  '}Sent <Text style={styles.sentMood}>{lastMood}</Text>
               {status === 'connected' ? ' to device' : ' (device offline)'}
             </Text>
-          </MotiView>
+          </View>
         )}
 
-        {/* Mood grid */}
         <View style={styles.grid}>
           {MOODS.map((mood) => (
             <View key={mood} style={styles.gridCell}>
@@ -207,7 +143,6 @@ export default function HomeScreen() {
           ))}
         </View>
 
-        {/* Connect hint when disconnected */}
         {status === 'disconnected' && (
           <SubText style={styles.hint}>
             Tap the badge above to connect your Commubu device
@@ -221,20 +156,18 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  root:          { flex: 1 },
-  headerRow:     { flexDirection: 'row', justifyContent: 'center', paddingHorizontal: 20, marginBottom: 4 },
-  badge:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, borderWidth: 1 },
-  badgeText:     { fontSize: 12, fontWeight: '600' },
-  scroll:        { alignItems: 'center', paddingTop: 8 },
-  titleRow:      { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginBottom: 4 },
-  title:         { fontSize: 30, fontWeight: 'bold', fontFamily: '429Font' },
-  heroContainer: { marginVertical: 12, alignItems: 'center', justifyContent: 'center' },
-  heroEmoji:     { fontSize: 80 },
-  moodPrompt:    { fontSize: 17, fontWeight: '600', color: '#475569', fontFamily: '429Font', marginBottom: 12 },
-  sentBadge:     { backgroundColor: '#F0FDF4', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 8, marginBottom: 12, borderWidth: 1, borderColor: '#BBF7D0' },
-  sentText:      { fontSize: 13, color: '#166534' },
-  sentMood:      { fontWeight: '700' },
-  grid:          { width: '100%', paddingHorizontal: 16, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 14, overflow: 'visible' },
-  gridCell:      { width: '31%', overflow: 'visible', marginBottom: 4 },
-  hint:          { textAlign: 'center', marginTop: 16, paddingHorizontal: 32 },
+  root:      { flex: 1 },
+  headerRow: { flexDirection: 'row', justifyContent: 'center', paddingHorizontal: 20, marginBottom: 4 },
+  badge:     { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, borderWidth: 1 },
+  badgeText: { fontSize: 12, fontWeight: '600' },
+  scroll:    { alignItems: 'center', paddingTop: 8 },
+  title:     { fontSize: 30, fontWeight: 'bold', fontFamily: '429Font', marginBottom: 8 },
+  heroEmoji: { fontSize: 80, marginVertical: 12 },
+  moodPrompt:{ fontSize: 17, fontWeight: '600', color: '#475569', fontFamily: '429Font', marginBottom: 12 },
+  sentBadge: { backgroundColor: '#F0FDF4', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 8, marginBottom: 12, borderWidth: 1, borderColor: '#BBF7D0' },
+  sentText:  { fontSize: 13, color: '#166534' },
+  sentMood:  { fontWeight: '700' },
+  grid:      { width: '100%', paddingHorizontal: 16, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 14, overflow: 'visible' },
+  gridCell:  { width: '31%', overflow: 'visible', marginBottom: 4 },
+  hint:      { textAlign: 'center', marginTop: 16, paddingHorizontal: 32 },
 });

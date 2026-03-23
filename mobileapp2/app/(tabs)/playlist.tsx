@@ -5,11 +5,11 @@ import {
   Image,
   Pressable,
   ActivityIndicator,
+  View as RNView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { MotiView } from 'moti';
 import * as AuthSession from 'expo-auth-session';
 
 import { View, Text, SubText, Card, useThemeColors } from '@/components/Themed';
@@ -23,12 +23,7 @@ type Track  = { id: string; name: string; artists: { name: string }[]; album: { 
 function ArtistRow({ artist, index }: { artist: Artist; index: number }) {
   const colors = useThemeColors();
   return (
-    <MotiView
-      from={{ opacity: 0, translateX: -20 }}
-      animate={{ opacity: 1, translateX: 0 }}
-      transition={{ type: 'timing', duration: 400, delay: index * 60 }}
-      style={[styles.listRow, { borderBottomColor: colors.separator }]}
-    >
+    <View style={[styles.listRow, { borderBottomColor: colors.separator }]}>
       <Text style={styles.rankText}>#{index + 1}</Text>
       {artist.images[0]?.url ? (
         <Image source={{ uri: artist.images[0].url }} style={styles.thumb} />
@@ -41,19 +36,14 @@ function ArtistRow({ artist, index }: { artist: Artist; index: number }) {
         <Text style={styles.listPrimary}>{artist.name}</Text>
         <SubText numberOfLines={1}>{artist.genres.slice(0, 2).join(', ') || 'Artist'}</SubText>
       </View>
-    </MotiView>
+    </View>
   );
 }
 
 function TrackRow({ track, index }: { track: Track; index: number }) {
   const colors = useThemeColors();
   return (
-    <MotiView
-      from={{ opacity: 0, translateX: -20 }}
-      animate={{ opacity: 1, translateX: 0 }}
-      transition={{ type: 'timing', duration: 400, delay: index * 60 }}
-      style={[styles.listRow, { borderBottomColor: colors.separator }]}
-    >
+    <View style={[styles.listRow, { borderBottomColor: colors.separator }]}>
       <Text style={styles.rankText}>#{index + 1}</Text>
       {track.album.images[0]?.url ? (
         <Image source={{ uri: track.album.images[0].url }} style={styles.thumb} />
@@ -66,7 +56,7 @@ function TrackRow({ track, index }: { track: Track; index: number }) {
         <Text style={styles.listPrimary} numberOfLines={1}>{track.name}</Text>
         <SubText numberOfLines={1}>{track.artists[0]?.name}</SubText>
       </View>
-    </MotiView>
+    </View>
   );
 }
 
@@ -92,8 +82,6 @@ export default function PlaylistScreen() {
           if (tokenResult && tokenResult.access_token) {
             setToken(tokenResult.access_token);
             await loadData(tokenResult.access_token);
-          } else {
-            console.error('Failed to get access token from Spotify');
           }
         } catch (e) {
           console.error('Spotify token exchange error:', e);
@@ -103,7 +91,6 @@ export default function PlaylistScreen() {
       }
     }
     handleAuth();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [response]);
 
   async function loadData(tk: string) {
@@ -119,19 +106,14 @@ export default function PlaylistScreen() {
     }
   }
 
-  async function loadRecommendations(tk: string, mood: string) {
+  async function loadRecommendations(tk: string, currentMood: string) {
     setRecommendationsLoading(true);
     try {
       const moodQueryMap: Record<string, string> = {
-        happy: 'happy upbeat',
-        neutral: 'easy listening',
-        stressed: 'calm relaxing',
-        angry: 'feel good',
-        sad: 'mellow',
-        sleepy: 'sleepy ambient',
+        happy: 'happy upbeat', neutral: 'easy listening', stressed: 'calm relaxing',
+        angry: 'feel good', sad: 'mellow', sleepy: 'sleepy ambient',
       };
-
-      const query = moodQueryMap[mood] ?? mood;
+      const query = moodQueryMap[currentMood] ?? currentMood;
       const result = await searchTracks(tk, query, 12);
       setRecommendations(result.tracks?.items ?? []);
     } catch (e) {
@@ -142,25 +124,19 @@ export default function PlaylistScreen() {
   }
 
   useEffect(() => {
-    if (token && mood) {
-      loadRecommendations(token, mood);
-    }
+    if (token && mood) loadRecommendations(token, mood);
   }, [token, mood]);
-
-  console.log(AuthSession.makeRedirectUri());
 
   return (
     <View style={[styles.root, { paddingTop: insets.top + 12 }]}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
 
-        {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Playlist</Text>
           <SubText>Your Spotify Top Charts</SubText>
         </View>
 
         {!token ? (
-          /* ── Not connected ── */
           <Card style={styles.connectCard}>
             <LinearGradient
               colors={['#1DB954' + '22', '#1DB954' + '08']}
@@ -183,16 +159,16 @@ export default function PlaylistScreen() {
         ) : loading ? (
           <ActivityIndicator size="large" color="#1DB954" style={{ marginTop: 60 }} />
         ) : (
-          <>          {/* Mood-based recommendations */}
-          {mood ? (
-            <View style={styles.moodHeader}>
-              <Text style={styles.recommendTitle}>Recommended for {mood}</Text>
-              <SubText>
-                {recommendationsLoading ? 'Loading recommendations…' : 'Tap the "Tracks" tab to view your mood playlist.'}
-              </SubText>
-            </View>
-          ) : null}
-            {/* Tab switcher */}
+          <>
+            {mood && (
+              <View style={styles.moodHeader}>
+                <Text style={styles.recommendTitle}>Recommended for {mood}</Text>
+                <SubText>
+                  {recommendationsLoading ? 'Loading recommendations…' : 'Tap the "Tracks" tab to view your mood playlist.'}
+                </SubText>
+              </View>
+            )}
+
             <View style={[styles.tabBar, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
               {(['artists', 'tracks'] as const).map(t => (
                 <Pressable
@@ -207,7 +183,6 @@ export default function PlaylistScreen() {
               ))}
             </View>
 
-            {/* List */}
             <Card style={styles.listCard}>
               {tab === 'artists' ? (
                 artists.map((a, i) => <ArtistRow key={a.id} artist={a} index={i} />)
@@ -229,7 +204,6 @@ export default function PlaylistScreen() {
           </>
         )}
 
-        {/* Spacer for floating menu */}
         <View style={{ height: 110 }} />
       </ScrollView>
     </View>
