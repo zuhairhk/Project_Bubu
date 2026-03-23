@@ -29,7 +29,18 @@ async function exchangeCodeForToken(code, codeVerifier, redirectUri) {
 }
 
 // Custom hook to handle Spotify Auth and token exchange
-export function useSpotifyAuth() {
+import type {
+  AuthRequest,
+  AuthRequestPromptOptions,
+  AuthSessionResult,
+} from 'expo-auth-session';
+
+export function useSpotifyAuth(): [
+  AuthRequest | null,
+  AuthSessionResult | null,
+  (options?: AuthRequestPromptOptions) => Promise<AuthSessionResult | null>,
+  () => Promise<{ access_token: string } | null>
+] {
   const redirectUri = AuthSession.makeRedirectUri({ native: 'commubu-login://callback' });
   const [request, response, promptAsync] = AuthSession.useAuthRequest(
     {
@@ -43,11 +54,16 @@ export function useSpotifyAuth() {
   );
 
   // Attach codeVerifier to request for later use
-  return [request, response, promptAsync, async () => {
-    if (response?.type === 'success' && response.params.code && request?.codeVerifier) {
-      // Exchange code for access token
-      return await exchangeCodeForToken(response.params.code, request.codeVerifier, redirectUri);
-    }
-    return null;
-  }];
+  return [
+    request,
+    response,
+    promptAsync,
+    async () => {
+      if (response?.type === 'success' && response.params.code && request?.codeVerifier) {
+        // Exchange code for access token
+        return await exchangeCodeForToken(response.params.code, request.codeVerifier, redirectUri);
+      }
+      return null;
+    },
+  ];
 }

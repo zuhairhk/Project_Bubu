@@ -13,8 +13,9 @@ import { MotiView } from 'moti';
 import * as AuthSession from 'expo-auth-session';
 
 import { View, Text, SubText, Card, useThemeColors } from '@/components/Themed';
+import { useMood } from '@/lib/MoodContext';
 import { useSpotifyAuth } from '@/lib/spotifyAuth';
-import { getTopArtists, getTopTracks } from '@/lib/spotifyApi';
+import { getTopArtists, getTopTracks, searchTracks } from '@/lib/spotifyApi';
 
 type Artist = { id: string; name: string; genres: string[]; images: { url: string }[] };
 type Track  = { id: string; name: string; artists: { name: string }[]; album: { name: string; images: { url: string }[] } };
@@ -75,8 +76,11 @@ export default function PlaylistScreen() {
   const [token,   setToken]   = useState<string | null>(null);
   const [artists, setArtists] = useState<Artist[]>([]);
   const [tracks,  setTracks]  = useState<Track[]>([]);
+  const [recommendations, setRecommendations] = useState<Track[]>([]);
+  const [recommendationsLoading, setRecommendationsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [tab,     setTab]     = useState<'artists' | 'tracks'>('artists');
+  const { mood } = useMood();
   const colors = useThemeColors();
 
   useEffect(() => {
@@ -115,6 +119,34 @@ export default function PlaylistScreen() {
     }
   }
 
+  async function loadRecommendations(tk: string, mood: string) {
+    setRecommendationsLoading(true);
+    try {
+      const moodQueryMap: Record<string, string> = {
+        happy: 'happy upbeat',
+        neutral: 'easy listening',
+        stressed: 'calm relaxing',
+        angry: 'feel good',
+        sad: 'mellow',
+        sleepy: 'sleepy ambient',
+      };
+
+      const query = moodQueryMap[mood] ?? mood;
+      const result = await searchTracks(tk, query, 12);
+      setRecommendations(result.tracks?.items ?? []);
+    } catch (e) {
+      console.error('Spotify recommendations error:', e);
+    } finally {
+      setRecommendationsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (token && mood) {
+      loadRecommendations(token, mood);
+    }
+  }, [token, mood]);
+
   console.log(AuthSession.makeRedirectUri());
 
   return (
@@ -142,7 +174,7 @@ export default function PlaylistScreen() {
             </SubText>
             <Pressable
               disabled={!request}
-              onPress={() => promptAsync()}
+              onPress={() => promptAsync?.()}
               style={({ pressed }) => [styles.connectBtn, pressed && { opacity: 0.8 }]}
             >
               <Text style={styles.connectBtnText}>Login with Spotify</Text>
@@ -151,7 +183,15 @@ export default function PlaylistScreen() {
         ) : loading ? (
           <ActivityIndicator size="large" color="#1DB954" style={{ marginTop: 60 }} />
         ) : (
-          <>
+          <>          {/* Mood-based recommendations */}
+          {mood ? (
+            <View style={styles.moodHeader}>
+              <Text style={styles.recommendTitle}>Recommended for {mood}</Text>
+              <SubText>
+                {recommendationsLoading ? 'Loading recommendations…' : 'Tap the "Tracks" tab to view your mood playlist.'}
+              </SubText>
+            </View>
+          ) : null}
             {/* Tab switcher */}
             <View style={[styles.tabBar, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
               {(['artists', 'tracks'] as const).map(t => (
@@ -169,10 +209,22 @@ export default function PlaylistScreen() {
 
             {/* List */}
             <Card style={styles.listCard}>
-              {tab === 'artists'
-                ? artists.map((a, i) => <ArtistRow key={a.id} artist={a} index={i} />)
-                : tracks.map((t, i)  => <TrackRow  key={t.id} track={t}   index={i} />)
-              }
+              {tab === 'artists' ? (
+                artists.map((a, i) => <ArtistRow key={a.id} artist={a} index={i} />)
+              ) : mood ? (
+                recommendationsLoading ? (
+                  <ActivityIndicator size="large" color="#1DB954" style={{ marginTop: 60 }} />
+                ) : recommendations.length > 0 ? (
+                  recommendations.map((t, i) => <TrackRow key={t.id} track={t} index={i} />)
+                ) : (
+                  <View style={{ padding: 20, alignItems: 'center' }}>
+                    <SubText>No recommendations found for "{mood}".</SubText>
+                    <SubText>Try picking a different mood on the home tab.</SubText>
+                  </View>
+                )
+              ) : (
+                tracks.map((t, i) => <TrackRow key={t.id} track={t} index={i} />)
+              )}
             </Card>
           </>
         )}
@@ -205,4 +257,6 @@ const styles = StyleSheet.create({
   thumbPlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#E2E8F0' },
   listMeta:      { flex: 1 },
   listPrimary:   { fontSize: 15, fontWeight: '600', marginBottom: 2 },
+  moodHeader:    { marginBottom: 12, paddingHorizontal: 2 },
+  recommendTitle:{ fontSize: 16, fontWeight: '700', marginBottom: 2 },
 });

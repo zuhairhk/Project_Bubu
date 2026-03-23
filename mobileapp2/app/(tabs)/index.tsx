@@ -7,14 +7,13 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { MotiText, MotiView } from 'moti';
-import LottieView from 'lottie-react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { View, Text, SubText, useThemeColors } from '@/components/Themed';
 import WiiButton from '@/components/WiiButton';
 import { useBle, ConnectionStatus } from '@/lib/BleContext';
+import { useMood } from '@/lib/MoodContext';
 
 // ─── Mood config ─────────────────────────────────────────────────────────────
 const MOOD_COLORS: Record<string, readonly [string, string, string]> = {
@@ -36,7 +35,7 @@ const API_MOOD_MAP: Record<string, string> = {
 };
 
 const MOODS = ['happy', 'neutral', 'stressed', 'angry', 'sad', 'sleepy'];
-const BACKEND_URL = 'https://f58f-2607-fea8-fd90-7a41-edf8-3fb3-76cc-68c1.ngrok-free.app/api/health';
+const BACKEND_URL = 'https://ac00-173-35-246-197.ngrok-free.app/api/health';
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 const STATUS_CONFIG: Record<ConnectionStatus, { label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
@@ -74,18 +73,42 @@ function BleStatusBadge() {
   );
 }
 
+// ─── Animated emoji (replaces Lottie) ────────────────────────────────────────
+function AnimatedHero({ mood }: { mood: string | null }) {
+  const emoji = mood ? MOOD_EMOJIS[mood] : '✨';
+  return (
+    <MotiView
+      from={{ scale: 0.8, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ type: 'spring', damping: 12 }}
+      key={emoji}
+      style={styles.heroContainer}
+    >
+      <MotiView
+        from={{ translateY: 0 }}
+        animate={{ translateY: -8 }}
+        transition={{ type: 'timing', duration: 1200, loop: true, repeatReverse: true }}
+      >
+        <Text style={styles.heroEmoji}>{emoji}</Text>
+      </MotiView>
+    </MotiView>
+  );
+}
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { status, sendMood, data, deviceCustomName } = useBle();
+  const { setMood } = useMood();
   const [lastMood, setLastMood] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
   const handleMood = useCallback(async (mood: string) => {
     setSending(true);
     setLastMood(mood);
+    setMood(mood);
+
     try {
-      // Post to backend (non-blocking, best-effort)
       fetch(BACKEND_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -97,12 +120,11 @@ export default function HomeScreen() {
         }),
       }).catch(() => {});
 
-      // Send to ESP32
       await sendMood(mood);
     } finally {
       setSending(false);
     }
-  }, [sendMood, data]);
+  }, [sendMood, data, setMood]);
 
   const title = deviceCustomName ? `Welcome, ${deviceCustomName}!` : 'Welcome back!';
 
@@ -128,6 +150,7 @@ export default function HomeScreen() {
             Device: {deviceCustomName}
           </MotiText>
         )}
+
         {/* Wavy title */}
         <View style={styles.titleRow}>
           {title.split('').map((char, i) => (
@@ -143,14 +166,8 @@ export default function HomeScreen() {
           ))}
         </View>
 
-        {/* Lottie animation */}
-        <LottieView
-          source={require('@/assets/animations/test.json')}
-          autoPlay
-          loop={false}
-          speed={0.8}
-          style={styles.lottie}
-        />
+        {/* Animated emoji hero */}
+        <AnimatedHero mood={lastMood} />
 
         {/* Mood prompt */}
         <MotiText
@@ -197,7 +214,6 @@ export default function HomeScreen() {
           </SubText>
         )}
 
-        {/* Spacer for floating menu */}
         <View style={{ height: 110 }} />
       </ScrollView>
     </View>
@@ -205,19 +221,20 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  root:      { flex: 1 },
-  headerRow: { flexDirection: 'row', justifyContent: 'center', paddingHorizontal: 20, marginBottom: 4 },
-  badge:     { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, borderWidth: 1 },
-  badgeText: { fontSize: 12, fontWeight: '600' },
-  scroll:    { alignItems: 'center', paddingTop: 8 },
-  titleRow:  { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginBottom: 4 },
-  title:     { fontSize: 30, fontWeight: 'bold', fontFamily: '429Font' },
-  lottie:    { width: 180, height: 180, marginBottom: 8 },
-  moodPrompt:{ fontSize: 17, fontWeight: '600', color: '#475569', fontFamily: '429Font', marginBottom: 12 },
-  sentBadge: { backgroundColor: '#F0FDF4', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 8, marginBottom: 12, borderWidth: 1, borderColor: '#BBF7D0' },
-  sentText:  { fontSize: 13, color: '#166534' },
-  sentMood:  { fontWeight: '700' },
-  grid:      { width: '100%', paddingHorizontal: 16, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 14, overflow: 'visible' },
-  gridCell:  { width: '31%', overflow: 'visible', marginBottom: 4 },
-  hint:      { textAlign: 'center', marginTop: 16, paddingHorizontal: 32 },
+  root:          { flex: 1 },
+  headerRow:     { flexDirection: 'row', justifyContent: 'center', paddingHorizontal: 20, marginBottom: 4 },
+  badge:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, borderWidth: 1 },
+  badgeText:     { fontSize: 12, fontWeight: '600' },
+  scroll:        { alignItems: 'center', paddingTop: 8 },
+  titleRow:      { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginBottom: 4 },
+  title:         { fontSize: 30, fontWeight: 'bold', fontFamily: '429Font' },
+  heroContainer: { marginVertical: 12, alignItems: 'center', justifyContent: 'center' },
+  heroEmoji:     { fontSize: 80 },
+  moodPrompt:    { fontSize: 17, fontWeight: '600', color: '#475569', fontFamily: '429Font', marginBottom: 12 },
+  sentBadge:     { backgroundColor: '#F0FDF4', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 8, marginBottom: 12, borderWidth: 1, borderColor: '#BBF7D0' },
+  sentText:      { fontSize: 13, color: '#166534' },
+  sentMood:      { fontWeight: '700' },
+  grid:          { width: '100%', paddingHorizontal: 16, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 14, overflow: 'visible' },
+  gridCell:      { width: '31%', overflow: 'visible', marginBottom: 4 },
+  hint:          { textAlign: 'center', marginTop: 16, paddingHorizontal: 32 },
 });

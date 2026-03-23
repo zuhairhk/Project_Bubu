@@ -8,6 +8,7 @@ import 'react-native-reanimated';
 import { useColorScheme } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { BleProvider } from '@/lib/BleContext';
+import { MoodProvider } from '@/lib/MoodContext';
 
 WebBrowser.maybeCompleteAuthSession();
 SplashScreen.preventAutoHideAsync();
@@ -31,13 +32,15 @@ function RootLayoutNav() {
   const colorScheme = useColorScheme();
 
   return (
-    <BleProvider>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <Stack>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="+not-found" />
-        </Stack>
-      </ThemeProvider>
-    </BleProvider>
+    <MoodProvider>
+      <BleProvider>
+        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <Stack>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="+not-found" />
+          </Stack>
+        </ThemeProvider>
+      </BleProvider>
+    </MoodProvider>
   );
 }

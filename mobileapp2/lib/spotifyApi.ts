@@ -13,3 +13,8 @@ export const getTopArtists = (token: string) =>
 
 export const getTopTracks = (token: string) =>
   spotifyFetch('/me/top/tracks?limit=10&time_range=medium_term', token);
+
+export async function searchTracks(token: string, query: string, limit = 10) {
+  const encoded = encodeURIComponent(query);
+  return spotifyFetch(`/search?q=${encoded}&type=track&limit=${limit}`, token);
+}
