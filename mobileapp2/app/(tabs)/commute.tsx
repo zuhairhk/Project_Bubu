@@ -193,7 +193,7 @@ function NextTrainCard({
   const isProceed = departure.status.toLowerCase().includes('proceed');
 
   return (
-    <Animated.View style={{ transform: [{ scale: pulse }], opacity: fadeIn }}>
+    <Animated.View style={{ transform: [{ scale: pulse }], opacity: fadeIn, }}>
       <View style={nextStyles.card}>
         {/* Accent bar */}
         <View style={[nextStyles.accentBar, { backgroundColor: lineColor }]} />
