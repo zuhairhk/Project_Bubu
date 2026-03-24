@@ -21,14 +21,13 @@ import {
   getTopTracks,
   getMoodRecommendations,
   generateMoodPlaylist,
-  SpotifyTrack,
 } from '@/lib/spotifyApi';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const BACKEND_URL          = 'https://ac00-173-35-246-197.ngrok-free.app';
-const PREDICT_URL          = `${BACKEND_URL}/api/ml/predict`;
-const AUTO_PREDICT_MS      = 60_000;
+const BACKEND_URL     = 'https://ac00-173-35-246-197.ngrok-free.app';
+const PREDICT_URL     = `${BACKEND_URL}/api/ml/predict`;
+const AUTO_PREDICT_MS = 60_000;
 
 const MOOD_EMOJIS: Record<string, string> = {
   happy: '😊', neutral: '😐', stressed: '😤', angry: '😠', sad: '😢', sleepy: '😴',
@@ -179,7 +178,7 @@ export default function PlaylistScreen() {
     }
   }, []);
 
-  // ── Auto mood prediction from BLE ──────────────────────────────────────────
+  // ── Auto mood prediction ───────────────────────────────────────────────────
 
   const predictMood = useCallback(async () => {
     if (bleStatus !== 'connected' || !bleData.heartRate) return;
@@ -201,7 +200,6 @@ export default function PlaylistScreen() {
       const mood = data.mood as Mood;
       setPredictionConf(data.confidence ?? 0);
 
-      // Only apply if user hasn't manually overridden
       if (moodSource !== 'manual') {
         setActiveMood(mood);
         setGlobalMood(mood);
@@ -221,7 +219,6 @@ export default function PlaylistScreen() {
     return () => { if (predictTimerRef.current) clearInterval(predictTimerRef.current); };
   }, [predictMood]);
 
-  // Load recs when token first arrives and mood is already set
   useEffect(() => {
     if (token && activeMood) loadRecommendations(token, activeMood);
   }, [token]);
@@ -235,6 +232,16 @@ export default function PlaylistScreen() {
     setPlaylistUrl(null);
     if (token) loadRecommendations(token, mood);
   }, [token, setGlobalMood, loadRecommendations]);
+
+  // ── Logout (force re-auth with new scopes) ─────────────────────────────────
+
+  const handleLogout = () => {
+    setToken(null);
+    setArtists([]);
+    setTopTracks([]);
+    setRecommendedTracks([]);
+    setPlaylistUrl(null);
+  };
 
   // ── Generate playlist ──────────────────────────────────────────────────────
 
@@ -356,7 +363,13 @@ export default function PlaylistScreen() {
           <ActivityIndicator size="large" color="#1DB954" style={{ marginTop: 40 }} />
         ) : (
           <>
-            {/* Generate button + open link */}
+            {/* Re-login button — forces fresh token with playlist scopes */}
+            <Pressable onPress={handleLogout} style={styles.reloginBtn}>
+              <Ionicons name="refresh-outline" size={13} color="#94A3B8" />
+              <SubText style={{ fontSize: 11, marginLeft: 4 }}>Re-login to Spotify</SubText>
+            </Pressable>
+
+            {/* Generate button */}
             {activeMood && (
               <View style={{ marginBottom: 12, gap: 8 }}>
                 <Pressable
@@ -378,12 +391,9 @@ export default function PlaylistScreen() {
                   </Text>
                 </Pressable>
 
-                {/* Personalization hint */}
-                {!generatingPlaylist && !playlistUrl && (
+                {!generatingPlaylist && !playlistUrl && artists.length > 0 && (
                   <SubText style={{ textAlign: 'center', fontSize: 11 }}>
-                    {artists.length > 0
-                      ? `Based on your top artists like ${artists.slice(0, 2).map(a => a.name).join(', ')}`
-                      : 'Connect Spotify to personalise based on your taste'}
+                    Based on your top artists like {artists.slice(0, 2).map(a => a.name).join(', ')}
                   </SubText>
                 )}
 
@@ -438,9 +448,7 @@ export default function PlaylistScreen() {
             ) : (
               <>
                 <Text style={styles.sectionLabel}>
-                  {activeMood
-                    ? `RECOMMENDED FOR ${activeMood.toUpperCase()}`
-                    : 'RECOMMENDED TRACKS'}
+                  {activeMood ? `RECOMMENDED FOR ${activeMood.toUpperCase()}` : 'RECOMMENDED TRACKS'}
                 </Text>
                 {artists.length > 0 && activeMood && (
                   <SubText style={{ marginBottom: 8, fontSize: 11 }}>
@@ -495,6 +503,7 @@ const styles = StyleSheet.create({
   bleDot:         { width: 6, height: 6, borderRadius: 3, backgroundColor: '#4ADE80' },
   blePillText:    { fontSize: 11, fontWeight: '600', color: '#16A34A' },
 
+  reloginBtn:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 12, padding: 6 },
   generateBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#1DB954', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 20 },
   generateBtnText:     { color: '#fff', fontWeight: '700', fontSize: 15 },
   playlistCreatedRow:  { flexDirection: 'row', alignItems: 'center', gap: 6, justifyContent: 'center' },
