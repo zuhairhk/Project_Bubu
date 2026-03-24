@@ -10,8 +10,10 @@ WebBrowser.maybeCompleteAuthSession();
 
 const CLIENT_ID = '346580e071a3460da5a50ec2b7e57390';
 
+// show_dialog=true forces Spotify to always show the permission consent screen
+// so the user grants the latest scopes every time — avoids stale token issues
 const discovery = {
-  authorizationEndpoint: 'https://accounts.spotify.com/authorize',
+  authorizationEndpoint: 'https://accounts.spotify.com/authorize?show_dialog=true',
 };
 
 async function exchangeCodeForToken(
@@ -33,7 +35,10 @@ async function exchangeCodeForToken(
     body:    body.toString(),
   });
 
-  if (!res.ok) throw new Error('Failed to exchange code for token');
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Token exchange failed: ${err}`);
+  }
   return res.json();
 }
 
@@ -48,8 +53,7 @@ export function useSpotifyAuth(): [
 
   const [request, response, promptAsync] = AuthSession.useAuthRequest(
     {
-      clientId:     CLIENT_ID,
-      // Expanded scopes — needed for playlist creation and reading top content
+      clientId: CLIENT_ID,
       scopes: [
         'user-top-read',
         'playlist-modify-public',
@@ -70,7 +74,11 @@ export function useSpotifyAuth(): [
     promptAsync,
     async () => {
       if (response?.type === 'success' && response.params.code && request?.codeVerifier) {
-        return await exchangeCodeForToken(response.params.code, request.codeVerifier, redirectUri);
+        return await exchangeCodeForToken(
+          response.params.code,
+          request.codeVerifier,
+          redirectUri,
+        );
       }
       return null;
     },
