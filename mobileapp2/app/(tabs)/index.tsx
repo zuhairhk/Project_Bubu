@@ -53,7 +53,7 @@ const MOOD_LABEL: Record<string, string> = {
 };
 
 // ─── Transit ─────────────────────────────────────────────────────────────────
-const TRANSIT_URL = 'https://7685-141-117-117-240.ngrok-free.app/api/transit/next';
+const TRANSIT_URL = 'https://ffed-141-117-117-125.ngrok-free.app/api/transit/next';
 const STORAGE_KEY = 'commute_selected_line';
 
 function minutesUntil(iso: string) {
