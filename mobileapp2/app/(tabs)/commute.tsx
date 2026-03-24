@@ -14,7 +14,6 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBle } from '@/lib/BleContext';
 
-// ─── Design tokens (shared with home + biometrics) ────────────────────────────
 const C = {
   bg:       '#F2F2F7',
   card:     '#FFFFFF',
@@ -37,19 +36,18 @@ const cardShadow = {
   elevation:     3,
 };
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-const API_URL        = 'https://ac00-173-35-246-197.ngrok-free.app/api/transit/next';
-const STORAGE_KEY    = 'commute_selected_line';
-const REFRESH_MS     = 30_000;
+const API_URL     = 'https://ac00-173-35-246-197.ngrok-free.app/api/transit/next';
+const STORAGE_KEY = 'commute_selected_line';
+const REFRESH_MS  = 30_000;
 
 const GO_LINES = [
-  { id: 'Lakeshore East',  label: 'Lakeshore East',  color: '#FF3B30' },
-  { id: 'Lakeshore West',  label: 'Lakeshore West',  color: '#FF3B30' },
-  { id: 'Kitchener',       label: 'Kitchener',        color: '#34C759' },
-  { id: 'Barrie',          label: 'Barrie',           color: '#007AFF' },
-  { id: 'Stouffville',     label: 'Stouffville',      color: '#AF52DE' },
-  { id: 'Richmond Hill',   label: 'Richmond Hill',    color: '#32ADE6' },
-  { id: 'Milton',          label: 'Milton',           color: '#FF9500' },
+  { id: 'Lakeshore East', label: 'Lakeshore East', color: '#FF3B30' },
+  { id: 'Lakeshore West', label: 'Lakeshore West', color: '#FF3B30' },
+  { id: 'Kitchener',      label: 'Kitchener',       color: '#34C759' },
+  { id: 'Barrie',         label: 'Barrie',          color: '#007AFF' },
+  { id: 'Stouffville',    label: 'Stouffville',     color: '#AF52DE' },
+  { id: 'Richmond Hill',  label: 'Richmond Hill',   color: '#32ADE6' },
+  { id: 'Milton',         label: 'Milton',          color: '#FF9500' },
 ];
 
 interface Departure {
@@ -66,19 +64,11 @@ function useClock() {
   return now;
 }
 
-function parseTime(iso: string) { return new Date(iso); }
-function minutesUntil(target: Date, now: Date) {
-  return Math.round((target.getTime() - now.getTime()) / 60000);
-}
-function fmtTime(d: Date) {
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-function fmtDate(d: Date) {
-  return d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
-}
-function fmtDep(iso: string) {
-  return parseTime(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
+function parseTime(iso: string)                    { return new Date(iso); }
+function minutesUntil(target: Date, now: Date)     { return Math.round((target.getTime() - now.getTime()) / 60000); }
+function fmtTime(d: Date)                          { return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+function fmtDate(d: Date)                          { return d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }); }
+function fmtDep(iso: string)                       { return parseTime(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 function urgColor(mins: number) {
   if (mins <= 3)  return C.red;
   if (mins <= 8)  return C.orange;
@@ -153,12 +143,9 @@ function NextTrainCard({ dep, now, lineColor }: { dep: Departure; now: Date; lin
   const proceed = dep.status.toLowerCase().includes('proceed');
 
   return (
-    <View style={[NT.card, { ...cardShadow }]}>
-      {/* Colour accent bar */}
+    <View style={[NT.card, cardShadow]}>
       <View style={[NT.bar, { backgroundColor: lineColor }]} />
-
       <View style={NT.inner}>
-        {/* Line tag + urgency */}
         <View style={NT.topRow}>
           <View style={NT.lineTag}>
             <View style={[NT.dot, { backgroundColor: lineColor }]} />
@@ -168,11 +155,7 @@ function NextTrainCard({ dep, now, lineColor }: { dep: Departure; now: Date; lin
             <Text style={[NT.urgText, { color: uc }]}>{ul}</Text>
           </View>
         </View>
-
-        {/* Destination */}
         <Text style={NT.dest}>{dep.destination}</Text>
-
-        {/* Countdown row */}
         <View style={NT.countRow}>
           <View>
             <Text style={[NT.countNum, { color: uc }]}>{mins < 0 ? '—' : mins}</Text>
@@ -193,8 +176,6 @@ function NextTrainCard({ dep, now, lineColor }: { dep: Departure; now: Date; lin
             )}
           </View>
         </View>
-
-        {/* Status */}
         <View style={NT.statusRow}>
           <View style={[NT.statusDot, { backgroundColor: proceed ? C.green : C.orange }]} />
           <Text style={[NT.statusText, { color: proceed ? C.green : C.orange }]}>{dep.status}</Text>
@@ -274,8 +255,11 @@ const UP = StyleSheet.create({
 export default function CommuteScreen() {
   const insets = useSafeAreaInsets();
   const now    = useClock();
-  const { data, status } = useBle();
-  const { steps, distance } = data;
+  const { data, status, connect } = useBle();
+
+  const isConnected = status === 'connected';
+  // Only surface step data when device is actually connected
+  const steps = isConnected ? (data.steps ?? null) : null;
 
   const [selectedLine,  setSelectedLine]  = useState<string | null>(null);
   const [pickerVisible, setPickerVisible] = useState(false);
@@ -431,7 +415,7 @@ export default function CommuteScreen() {
           </>
         )}
 
-        {/* Activity */}
+        {/* Activity — steps from BLE device */}
         <Text style={[S.sectionLabel, { marginTop: 24, marginBottom: 10 }]}>TODAY'S ACTIVITY</Text>
         <View style={[S.listCard, cardShadow]}>
           <View style={S.actRow}>
@@ -440,22 +424,21 @@ export default function CommuteScreen() {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={S.actLabel}>Steps Today</Text>
-              <Text style={S.actValue}>
-                {status === 'connected' && steps != null ? steps.toLocaleString() : '—'}
+              <Text style={[S.actValue, { color: steps != null ? C.text : C.textTert }]}>
+                {steps != null ? steps.toLocaleString() : '—'}
               </Text>
             </View>
-          </View>
-          <View style={S.separator} />
-          <View style={S.actRow}>
-            <View style={[S.actIcon, { backgroundColor: C.indigo + '15' }]}>
-              <Ionicons name="location-outline" size={18} color={C.indigo} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={S.actLabel}>Distance</Text>
-              <Text style={S.actValue}>
-                {status === 'connected' && distance != null ? `${distance.toFixed(2)} km` : '—'}
-              </Text>
-            </View>
+            {!isConnected && (
+              <TouchableOpacity onPress={connect} style={S.miniConnectBtn}>
+                <Ionicons name="bluetooth-outline" size={13} color={C.blue} />
+                <Text style={S.miniConnectText}>Connect</Text>
+              </TouchableOpacity>
+            )}
+            {isConnected && (
+              <View style={S.liveDot}>
+                <View style={S.liveDotInner} />
+              </View>
+            )}
           </View>
         </View>
 
@@ -474,25 +457,11 @@ const S = StyleSheet.create({
   subtitle:    { fontSize: 13, color: C.textTert, marginTop: 2 },
   refreshBtn:  { width: 36, height: 36, borderRadius: 18, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center', ...cardShadow },
 
-  clockCard: {
-    backgroundColor: C.card,
-    borderRadius: 20,
-    paddingVertical: 24,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  clockTime: { fontSize: 52, fontWeight: '700', color: C.text, letterSpacing: -2 },
-  clockDate: { fontSize: 13, color: C.textTert, marginTop: 4 },
+  clockCard: { backgroundColor: C.card, borderRadius: 20, paddingVertical: 24, alignItems: 'center', marginBottom: 12 },
+  clockTime:  { fontSize: 52, fontWeight: '700', color: C.text, letterSpacing: -2 },
+  clockDate:  { fontSize: 13, color: C.textTert, marginTop: 4 },
 
-  lineSelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: C.card,
-    borderRadius: 16,
-    overflow: 'hidden',
-    marginBottom: 20,
-    paddingRight: 16,
-  },
+  lineSelector:        { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderRadius: 16, overflow: 'hidden', marginBottom: 20, paddingRight: 16 },
   lineSelectorBar:     { width: 5, alignSelf: 'stretch' },
   lineSelectorContent: { flex: 1, paddingVertical: 14, paddingHorizontal: 14 },
   lineSelectorLabel:   { fontSize: 10, fontWeight: '700', color: C.textTert, letterSpacing: 1, marginBottom: 3 },
@@ -514,5 +483,10 @@ const S = StyleSheet.create({
   actRow:    { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 14 },
   actIcon:   { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   actLabel:  { fontSize: 12, color: C.textTert, marginBottom: 2 },
-  actValue:  { fontSize: 18, fontWeight: '700', color: C.text },
+  actValue:  { fontSize: 18, fontWeight: '700' },
+
+  miniConnectBtn:  { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.blue + '12', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6 },
+  miniConnectText: { fontSize: 12, fontWeight: '600', color: C.blue },
+  liveDot:         { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
+  liveDotInner:    { width: 8, height: 8, borderRadius: 4, backgroundColor: C.green },
 });
