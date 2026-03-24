@@ -54,16 +54,15 @@ export function useSpotifyAuth(): [
       clientId: CLIENT_ID,
       scopes: [
         'user-top-read',
-        'playlist-modify-public',
-        'playlist-modify-private',
         'user-read-private',
         'user-read-email',
+        'user-modify-playback-state',  // needed for queue
+        'user-read-playback-state',    // needed to check active device
       ],
       redirectUri,
       responseType: 'code',
       usePKCE:      true,
-      // Force Spotify to always show consent screen so new scopes are granted
-      extraParams: { show_dialog: 'true' },
+      extraParams:  { show_dialog: 'true' },
     },
     discovery,
   );

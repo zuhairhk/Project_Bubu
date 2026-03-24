@@ -20,7 +20,8 @@ import {
   getTopArtists,
   getTopTracks,
   getMoodRecommendations,
-  generateMoodPlaylist,
+  queueAllTracks,
+  SpotifyTrack,
 } from '@/lib/spotifyApi';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -48,7 +49,7 @@ type Mood = typeof MOOD_LABELS[number];
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Artist = { id: string; name: string; genres: string[]; images: { url: string }[] };
-type Track  = { id: string; uri: string; name: string; artists: { name: string }[]; album: { name: string; images: { url: string }[] } };
+type Track  = { id: string; uri: string; name: string; artists: { name: string }[]; album: { name: string; images: { url: string }[] }; external_urls: { spotify: string } };
 
 // ─── Row components ───────────────────────────────────────────────────────────
 
@@ -72,10 +73,25 @@ function ArtistRow({ artist, index }: { artist: Artist; index: number }) {
   );
 }
 
-function TrackRow({ track, index }: { track: Track; index: number }) {
+function TrackRow({
+  track,
+  index,
+  onPress,
+}: {
+  track: Track;
+  index: number;
+  onPress?: () => void;
+}) {
   const colors = useThemeColors();
   return (
-    <View style={[styles.listRow, { borderBottomColor: colors.separator }]}>
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.listRow,
+        { borderBottomColor: colors.separator },
+        pressed && { backgroundColor: colors.card },
+      ]}
+    >
       <Text style={styles.rankText}>#{index + 1}</Text>
       {track.album.images[0]?.url ? (
         <Image source={{ uri: track.album.images[0].url }} style={styles.thumb} />
@@ -88,7 +104,8 @@ function TrackRow({ track, index }: { track: Track; index: number }) {
         <Text style={styles.listPrimary} numberOfLines={1}>{track.name}</Text>
         <SubText numberOfLines={1}>{track.artists[0]?.name}</SubText>
       </View>
-    </View>
+      <Ionicons name="play-circle-outline" size={22} color="#1DB954" style={{ marginLeft: 8 }} />
+    </Pressable>
   );
 }
 
@@ -131,9 +148,7 @@ export default function PlaylistScreen() {
   const [tab, setTab]                             = useState<'charts' | 'vibes'>('charts');
   const [recommendedTracks, setRecommendedTracks] = useState<Track[]>([]);
   const [recLoading, setRecLoading]               = useState(false);
-  const [generatingPlaylist, setGeneratingPlaylist] = useState(false);
-  const [playlistUrl, setPlaylistUrl]             = useState<string | null>(null);
-  const [wasPersonalized, setWasPersonalized]     = useState(false);
+  const [queuingTracks, setQueuingTracks]         = useState(false);
 
   const predictTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -167,10 +182,9 @@ export default function PlaylistScreen() {
 
   const loadRecommendations = useCallback(async (tk: string, mood: Mood) => {
     setRecLoading(true);
-    setPlaylistUrl(null);
     try {
       const result = await getMoodRecommendations(tk, mood, 20);
-      setRecommendedTracks(result.tracks);
+      setRecommendedTracks(result.tracks as Track[]);
     } catch (e) {
       console.error('Recommendations error:', e);
     } finally {
@@ -229,45 +243,59 @@ export default function PlaylistScreen() {
     setActiveMood(mood);
     setGlobalMood(mood);
     setMoodSource('manual');
-    setPlaylistUrl(null);
     if (token) loadRecommendations(token, mood);
   }, [token, setGlobalMood, loadRecommendations]);
 
-  // ── Logout (force re-auth with new scopes) ─────────────────────────────────
+  // ── Open single track in Spotify ──────────────────────────────────────────
+
+  const handleTrackPress = useCallback((track: Track) => {
+    // Try Spotify app deep link first, fall back to web
+    Linking.openURL(track.uri).catch(() => {
+      Linking.openURL(track.external_urls.spotify);
+    });
+  }, []);
+
+  // ── Queue all tracks ──────────────────────────────────────────────────────
+
+  const handleQueueAll = useCallback(async () => {
+    if (!token || recommendedTracks.length === 0) return;
+
+    // First open Spotify with the first track so something starts playing
+    const firstTrack = recommendedTracks[0];
+    Linking.openURL(firstTrack.uri).catch(() => {
+      Linking.openURL(firstTrack.external_urls.spotify);
+    });
+
+    // Then queue the rest in the background
+    if (recommendedTracks.length > 1) {
+      setQueuingTracks(true);
+      try {
+        const rest = recommendedTracks.slice(1);
+        const result = await queueAllTracks(token, rest as SpotifyTrack[]);
+        console.log(`Queued ${result.queued} tracks, ${result.failed} failed`);
+        if (result.queued > 0) {
+          Alert.alert(
+            '🎵 Added to Queue',
+            `Opened first track and queued ${result.queued} more in Spotify.`,
+            [{ text: 'OK' }],
+          );
+        }
+      } catch (e) {
+        console.error('Queue error:', e);
+      } finally {
+        setQueuingTracks(false);
+      }
+    }
+  }, [token, recommendedTracks]);
+
+  // ── Logout ─────────────────────────────────────────────────────────────────
 
   const handleLogout = () => {
     setToken(null);
     setArtists([]);
     setTopTracks([]);
     setRecommendedTracks([]);
-    setPlaylistUrl(null);
   };
-
-  // ── Generate playlist ──────────────────────────────────────────────────────
-
-  const handleGeneratePlaylist = useCallback(async () => {
-    if (!token || !activeMood) return;
-    setGeneratingPlaylist(true);
-    try {
-      const result = await generateMoodPlaylist(token, activeMood, MOOD_EMOJIS[activeMood]);
-      setPlaylistUrl(result.playlistUrl);
-      setWasPersonalized(result.personalized);
-      Alert.alert(
-        'Playlist Created! 🎉',
-        result.personalized
-          ? `Added ${result.trackCount} tracks based on your Spotify taste + ${activeMood} mood.`
-          : `Added ${result.trackCount} tracks for your ${activeMood} mood.`,
-        [
-          { text: 'Open in Spotify', onPress: () => Linking.openURL(result.playlistUrl) },
-          { text: 'Later', style: 'cancel' },
-        ],
-      );
-    } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Failed to create playlist');
-    } finally {
-      setGeneratingPlaylist(false);
-    }
-  }, [token, activeMood]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -284,7 +312,7 @@ export default function PlaylistScreen() {
           <SubText>Mood-powered music</SubText>
         </View>
 
-        {/* ── Mood card ── */}
+        {/* Mood card */}
         <Card style={styles.moodCard}>
           <LinearGradient colors={[moodBg[0], moodBg[1]]} style={StyleSheet.absoluteFill} start={[0,0]} end={[1,1]} />
 
@@ -342,14 +370,14 @@ export default function PlaylistScreen() {
           </View>
         </Card>
 
-        {/* ── Spotify section ── */}
+        {/* Spotify section */}
         {!token ? (
           <Card style={styles.connectCard}>
             <LinearGradient colors={['#1DB95422', '#1DB95408']} style={StyleSheet.absoluteFill} start={[0,0]} end={[1,1]} />
             <Ionicons name="musical-notes" size={48} color="#1DB954" style={{ marginBottom: 16 }} />
             <Text style={styles.connectTitle}>Connect Spotify</Text>
             <SubText style={{ textAlign: 'center', marginBottom: 20 }}>
-              Login to generate personalised playlists based on your taste and mood
+              Login to get personalised mood-based music recommendations
             </SubText>
             <Pressable
               disabled={!request}
@@ -363,57 +391,11 @@ export default function PlaylistScreen() {
           <ActivityIndicator size="large" color="#1DB954" style={{ marginTop: 40 }} />
         ) : (
           <>
-            {/* Re-login button — forces fresh token with playlist scopes */}
+            {/* Re-login */}
             <Pressable onPress={handleLogout} style={styles.reloginBtn}>
               <Ionicons name="refresh-outline" size={13} color="#94A3B8" />
               <SubText style={{ fontSize: 11, marginLeft: 4 }}>Re-login to Spotify</SubText>
             </Pressable>
-
-            {/* Generate button */}
-            {activeMood && (
-              <View style={{ marginBottom: 12, gap: 8 }}>
-                <Pressable
-                  onPress={handleGeneratePlaylist}
-                  disabled={generatingPlaylist}
-                  style={({ pressed }) => [
-                    styles.generateBtn,
-                    (pressed || generatingPlaylist) && { opacity: 0.75 },
-                  ]}
-                >
-                  {generatingPlaylist
-                    ? <ActivityIndicator size="small" color="#fff" />
-                    : <Ionicons name="add-circle-outline" size={20} color="#fff" />
-                  }
-                  <Text style={styles.generateBtnText}>
-                    {generatingPlaylist
-                      ? 'Creating playlist…'
-                      : `Create ${MOOD_EMOJIS[activeMood]} ${activeMood} playlist`}
-                  </Text>
-                </Pressable>
-
-                {!generatingPlaylist && !playlistUrl && artists.length > 0 && (
-                  <SubText style={{ textAlign: 'center', fontSize: 11 }}>
-                    Based on your top artists like {artists.slice(0, 2).map(a => a.name).join(', ')}
-                  </SubText>
-                )}
-
-                {playlistUrl && (
-                  <View style={styles.playlistCreatedRow}>
-                    <Ionicons name="checkmark-circle" size={16} color="#1DB954" />
-                    <Text style={styles.playlistCreatedText}>
-                      {wasPersonalized ? 'Personalised for you' : 'Generated for your mood'}
-                    </Text>
-                    <Pressable
-                      onPress={() => Linking.openURL(playlistUrl)}
-                      style={({ pressed }) => [styles.openSpotifyBtn, pressed && { opacity: 0.8 }]}
-                    >
-                      <Ionicons name="open-outline" size={14} color="#1DB954" />
-                      <Text style={styles.openSpotifyText}>Open in Spotify</Text>
-                    </Pressable>
-                  </View>
-                )}
-              </View>
-            )}
 
             {/* Tabs */}
             <View style={[styles.tabBar, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
@@ -442,30 +424,73 @@ export default function PlaylistScreen() {
                 <Card style={styles.listCard}>
                   {topTracks.length === 0
                     ? <SubText style={{ padding: 16, textAlign: 'center' }}>No data yet</SubText>
-                    : topTracks.map((t, i) => <TrackRow key={t.id} track={t} index={i} />)}
+                    : topTracks.map((t, i) => (
+                        <TrackRow
+                          key={t.id}
+                          track={t}
+                          index={i}
+                          onPress={() => handleTrackPress(t)}
+                        />
+                      ))}
                 </Card>
               </>
             ) : (
               <>
-                <Text style={styles.sectionLabel}>
-                  {activeMood ? `RECOMMENDED FOR ${activeMood.toUpperCase()}` : 'RECOMMENDED TRACKS'}
-                </Text>
-                {artists.length > 0 && activeMood && (
-                  <SubText style={{ marginBottom: 8, fontSize: 11 }}>
-                    Picking from artists like {artists.slice(0, 3).map(a => a.name).join(', ')}
-                  </SubText>
-                )}
+                {/* Vibes header with Play All button */}
+                <View style={styles.vibesHeader}>
+                  <View>
+                    <Text style={styles.sectionLabel}>
+                      {activeMood ? `FOR YOUR ${activeMood.toUpperCase()} MOOD` : 'RECOMMENDED'}
+                    </Text>
+                    {artists.length > 0 && activeMood && (
+                      <SubText style={{ fontSize: 11 }}>
+                        Based on {artists.slice(0, 2).map(a => a.name).join(', ')}
+                      </SubText>
+                    )}
+                  </View>
+                  {recommendedTracks.length > 0 && (
+                    <Pressable
+                      onPress={handleQueueAll}
+                      disabled={queuingTracks}
+                      style={({ pressed }) => [
+                        styles.playAllBtn,
+                        (pressed || queuingTracks) && { opacity: 0.7 },
+                      ]}
+                    >
+                      {queuingTracks
+                        ? <ActivityIndicator size="small" color="#fff" />
+                        : <Ionicons name="play" size={14} color="#fff" />
+                      }
+                      <Text style={styles.playAllText}>
+                        {queuingTracks ? 'Queuing…' : 'Play All'}
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+
                 {recLoading ? (
                   <ActivityIndicator size="large" color="#1DB954" style={{ marginTop: 40 }} />
                 ) : recommendedTracks.length > 0 ? (
-                  <Card style={styles.listCard}>
-                    {recommendedTracks.map((t, i) => <TrackRow key={t.id} track={t} index={i} />)}
-                  </Card>
+                  <>
+                    <SubText style={{ marginBottom: 8, fontSize: 11, textAlign: 'center' }}>
+                      Tap a track to open in Spotify · Tap Play All to queue everything
+                    </SubText>
+                    <Card style={styles.listCard}>
+                      {recommendedTracks.map((t, i) => (
+                        <TrackRow
+                          key={t.id}
+                          track={t}
+                          index={i}
+                          onPress={() => handleTrackPress(t)}
+                        />
+                      ))}
+                    </Card>
+                  </>
                 ) : (
                   <Card style={{ padding: 24, alignItems: 'center' }}>
                     <SubText>
                       {activeMood
-                        ? 'Tap "Create playlist" to generate tracks'
+                        ? 'Loading recommendations…'
                         : 'Select a mood to see recommendations'}
                     </SubText>
                   </Card>
@@ -503,13 +528,7 @@ const styles = StyleSheet.create({
   bleDot:         { width: 6, height: 6, borderRadius: 3, backgroundColor: '#4ADE80' },
   blePillText:    { fontSize: 11, fontWeight: '600', color: '#16A34A' },
 
-  reloginBtn:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 12, padding: 6 },
-  generateBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#1DB954', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 20 },
-  generateBtnText:     { color: '#fff', fontWeight: '700', fontSize: 15 },
-  playlistCreatedRow:  { flexDirection: 'row', alignItems: 'center', gap: 6, justifyContent: 'center' },
-  playlistCreatedText: { fontSize: 12, color: '#1DB954', fontWeight: '600', flex: 1 },
-  openSpotifyBtn:      { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: '#1DB954', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
-  openSpotifyText:     { color: '#1DB954', fontWeight: '600', fontSize: 12 },
+  reloginBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 12, padding: 6 },
 
   tabBar:         { flexDirection: 'row', borderRadius: 12, borderWidth: 1, overflow: 'hidden', marginBottom: 12 },
   tabBtn:         { flex: 1, paddingVertical: 10, alignItems: 'center' },
@@ -517,7 +536,11 @@ const styles = StyleSheet.create({
   tabLabel:       { fontWeight: '600', fontSize: 14 },
   tabLabelActive: { color: '#fff' },
 
-  sectionLabel:     { fontSize: 10, fontWeight: '700', color: '#94A3B8', letterSpacing: 0.8, marginBottom: 8 },
+  vibesHeader:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  playAllBtn:     { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#1DB954', borderRadius: 20, paddingVertical: 8, paddingHorizontal: 16 },
+  playAllText:    { color: '#fff', fontWeight: '700', fontSize: 13 },
+
+  sectionLabel:     { fontSize: 10, fontWeight: '700', color: '#94A3B8', letterSpacing: 0.8, marginBottom: 4 },
   listCard:         { overflow: 'hidden', marginBottom: 4 },
   listRow:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
   rankText:         { width: 28, fontSize: 12, color: '#94A3B8', fontWeight: '600' },
