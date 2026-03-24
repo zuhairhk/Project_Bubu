@@ -11,7 +11,7 @@ async function spotifyFetch(path: string, token: string, options?: RequestInit) 
   });
   if (!res.ok) {
     const body = await res.text();
-    console.error(`Spotify ${path} failed ${res.status}:`, body); // ADD THIS
+    console.error(`Spotify ${path} failed ${res.status}:`, body);
     throw new Error(`Spotify ${path} failed: ${res.status}`);
   }
   if (res.status === 204) return {};
@@ -31,7 +31,7 @@ export async function searchTracks(token: string, query: string, limit = 10) {
   return spotifyFetch(`/search?q=${encoded}&type=track&limit=${limit}`, token);
 }
 
-export async function getUserProfile(token: string) {
+export async function getUserProfile(token: string): Promise<{ id: string; display_name: string }> {
   const result = await spotifyFetch('/me', token);
   console.log('Spotify user profile:', JSON.stringify(result));
   return result;
@@ -51,9 +51,7 @@ export type SpotifyTrack = {
 type TopArtist = { id: string; name: string; genres: string[] };
 type TopTrack  = { id: string; name: string; artists: { name: string }[]; album: { name: string; images: { url: string }[] }; uri: string };
 
-// ─── Mood query modifiers ─────────────────────────────────────────────────────
-// These are appended to artist/track names to bias search toward a mood vibe.
-// For stressed/angry we COUNTER the mood (calming music to decompress).
+// ─── Mood search queries ──────────────────────────────────────────────────────
 
 const MOOD_QUERY_SUFFIX: Record<string, string> = {
   happy:   'upbeat feel good',
@@ -82,19 +80,15 @@ export async function getMoodRecommendations(
 ): Promise<{ tracks: SpotifyTrack[]; personalized: boolean }> {
   const suffix = MOOD_QUERY_SUFFIX[mood] ?? '';
 
-  // Step 1: Try to get user's top artists and tracks
   let topArtists: TopArtist[] = [];
   let topTracksItems: TopTrack[] = [];
 
   try {
-    const [ar, tr] = await Promise.all([
-      getTopArtists(token),
-      getTopTracks(token),
-    ]);
+    const [ar, tr] = await Promise.all([getTopArtists(token), getTopTracks(token)]);
     topArtists     = ar.items ?? [];
     topTracksItems = tr.items ?? [];
   } catch {
-    // Fall through to genre-based fallback
+    // fall through to genre fallback
   }
 
   const seen   = new Set<string>();
@@ -112,23 +106,16 @@ export async function getMoodRecommendations(
   const personalized = topArtists.length > 0 || topTracksItems.length > 0;
 
   if (personalized) {
-    // Step 2a: Search using user's favourite artists + mood suffix
-    // Pick 3 random top artists so playlist varies each time
     const shuffledArtists = [...topArtists].sort(() => Math.random() - 0.5).slice(0, 3);
     const artistQueries   = shuffledArtists.map(a => `artist:"${a.name}" ${suffix}`);
 
-    // Step 2b: Search using genres from user's top artists
-    const allGenres = topArtists.flatMap(a => a.genres ?? []);
+    const allGenres    = topArtists.flatMap(a => a.genres ?? []);
     const uniqueGenres = [...new Set(allGenres)].slice(0, 4);
     const genreQueries = uniqueGenres.map(g => `genre:"${g}" ${suffix}`);
 
-    // Step 2c: Search similar to user's top tracks
-    const shuffledTracks  = [...topTracksItems].sort(() => Math.random() - 0.5).slice(0, 2);
-    const trackQueries    = shuffledTracks.map(
-      t => `"${t.artists[0]?.name ?? ''}" ${suffix}`,
-    );
+    const shuffledTracks = [...topTracksItems].sort(() => Math.random() - 0.5).slice(0, 2);
+    const trackQueries   = shuffledTracks.map(t => `"${t.artists[0]?.name ?? ''}" ${suffix}`);
 
-    // Run all queries in parallel, 6-8 tracks each
     const allQueries = [...artistQueries, ...genreQueries, ...trackQueries];
     const perQuery   = Math.ceil(limit / allQueries.length) + 2;
 
@@ -137,17 +124,15 @@ export async function getMoodRecommendations(
     );
 
     for (const r of results) {
-      if (r.status === 'fulfilled') {
-        addTracks(r.value?.tracks?.items ?? []);
-      }
+      if (r.status === 'fulfilled') addTracks(r.value?.tracks?.items ?? []);
       if (tracks.length >= limit) break;
     }
   }
 
-  // Step 3: If not enough tracks (no top data or sparse results), use genre fallback
+  // Fallback if not enough tracks
   if (tracks.length < limit) {
     const fallbackQueries = MOOD_GENRE_FALLBACK[mood] ?? MOOD_GENRE_FALLBACK['neutral'];
-    const needed = limit - tracks.length;
+    const needed   = limit - tracks.length;
     const perQuery = Math.ceil(needed / fallbackQueries.length) + 2;
 
     const results = await Promise.allSettled(
@@ -155,9 +140,7 @@ export async function getMoodRecommendations(
     );
 
     for (const r of results) {
-      if (r.status === 'fulfilled') {
-        addTracks(r.value?.tracks?.items ?? []);
-      }
+      if (r.status === 'fulfilled') addTracks(r.value?.tracks?.items ?? []);
       if (tracks.length >= limit) break;
     }
   }
@@ -165,22 +148,18 @@ export async function getMoodRecommendations(
   return { tracks, personalized };
 }
 
-// ─── Playlist creation ────────────────────────────────────────────────────────
+// ─── Playlist creation — uses /me/playlists (works in dev mode) ───────────────
 
 export async function createPlaylist(
   token: string,
-  userId: string,
   name: string,
   description = '',
 ): Promise<{ id: string; external_urls: { spotify: string } }> {
-  console.log('Creating playlist for user:', userId);
-  console.log('Token starts with:', token.substring(0, 20));
-  const result = await spotifyFetch(`/users/${userId}/playlists`, token, {
+  console.log('Creating playlist via /me/playlists');
+  return spotifyFetch('/me/playlists', token, {
     method: 'POST',
     body: JSON.stringify({ name, description, public: false }),
   });
-  console.log('Playlist created:', result);
-  return result;
 }
 
 export async function addTracksToPlaylist(
@@ -201,10 +180,7 @@ export async function generateMoodPlaylist(
   mood: string,
   moodEmoji: string,
 ): Promise<{ playlistUrl: string; trackCount: number; personalized: boolean }> {
-  const [profile, recResult] = await Promise.all([
-    getUserProfile(token),
-    getMoodRecommendations(token, mood, 20),
-  ]);
+  const recResult = await getMoodRecommendations(token, mood, 20);
 
   const { tracks, personalized } = recResult;
   if (tracks.length === 0) throw new Error('No tracks found for this mood');
@@ -216,7 +192,7 @@ export async function generateMoodPlaylist(
     ? `Personalised for your ${mood} mood by Commubu on ${date}, based on your Spotify taste`
     : `Auto-generated by Commubu for your ${mood} mood on ${date}`;
 
-  const playlist = await createPlaylist(token, profile.id, name, desc);
+  const playlist = await createPlaylist(token, name, desc);
   await addTracksToPlaylist(token, playlist.id, tracks.map(t => t.uri));
 
   return {
