@@ -158,7 +158,7 @@ export async function createPlaylist(
   console.log('Creating playlist via /me/playlists');
   return spotifyFetch('/me/playlists', token, {
     method: 'POST',
-    body: JSON.stringify({ name, description, public: false }),
+    body: JSON.stringify({ name, description, public: true }),
   });
 }
 
