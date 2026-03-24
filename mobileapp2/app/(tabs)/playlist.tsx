@@ -24,11 +24,11 @@ import {
   SpotifyTrack,
 } from '@/lib/spotifyApi';
 
-// ─── Config ──────────────────────────────────────────────────────────────────
+// ─── Config ───────────────────────────────────────────────────────────────────
 
-const BACKEND_URL   = 'https://ac00-173-35-246-197.ngrok-free.app';
-const PREDICT_URL   = `${BACKEND_URL}/api/ml/predict`;
-const AUTO_PREDICT_INTERVAL_MS = 60_000;
+const BACKEND_URL          = 'https://ac00-173-35-246-197.ngrok-free.app';
+const PREDICT_URL          = `${BACKEND_URL}/api/ml/predict`;
+const AUTO_PREDICT_MS      = 60_000;
 
 const MOOD_EMOJIS: Record<string, string> = {
   happy: '😊', neutral: '😐', stressed: '😤', angry: '😠', sad: '😢', sleepy: '😴',
@@ -49,7 +49,7 @@ type Mood = typeof MOOD_LABELS[number];
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Artist = { id: string; name: string; genres: string[]; images: { url: string }[] };
-type Track  = { id: string; name: string; artists: { name: string }[]; album: { name: string; images: { url: string }[] }; uri: string };
+type Track  = { id: string; uri: string; name: string; artists: { name: string }[]; album: { name: string; images: { url: string }[] } };
 
 // ─── Row components ───────────────────────────────────────────────────────────
 
@@ -119,25 +119,26 @@ export default function PlaylistScreen() {
   const { data: bleData, status: bleStatus } = useBle();
 
   const [request, response, promptAsync, getToken] = useSpotifyAuth();
-  const [token, setToken]       = useState<string | null>(null);
-  const [artists, setArtists]   = useState<Artist[]>([]);
+  const [token, setToken]         = useState<string | null>(null);
+  const [artists, setArtists]     = useState<Artist[]>([]);
   const [topTracks, setTopTracks] = useState<Track[]>([]);
-  const [loading, setLoading]   = useState(false);
+  const [loading, setLoading]     = useState(false);
 
-  const [activeMood, setActiveMood]             = useState<Mood | null>(null);
-  const [moodSource, setMoodSource]             = useState<'auto' | 'manual' | null>(null);
-  const [predictionConf, setPredictionConf]     = useState<number>(0);
-  const [predicting, setPredicting]             = useState(false);
+  const [activeMood, setActiveMood]         = useState<Mood | null>(null);
+  const [moodSource, setMoodSource]         = useState<'auto' | 'manual' | null>(null);
+  const [predictionConf, setPredictionConf] = useState<number>(0);
+  const [predicting, setPredicting]         = useState(false);
 
-  const [tab, setTab]                           = useState<'charts' | 'vibes'>('charts');
+  const [tab, setTab]                             = useState<'charts' | 'vibes'>('charts');
   const [recommendedTracks, setRecommendedTracks] = useState<Track[]>([]);
-  const [recLoading, setRecLoading]             = useState(false);
+  const [recLoading, setRecLoading]               = useState(false);
   const [generatingPlaylist, setGeneratingPlaylist] = useState(false);
-  const [playlistUrl, setPlaylistUrl]           = useState<string | null>(null);
+  const [playlistUrl, setPlaylistUrl]             = useState<string | null>(null);
+  const [wasPersonalized, setWasPersonalized]     = useState(false);
 
   const predictTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Spotify login ──
+  // ── Spotify login ──────────────────────────────────────────────────────────
 
   useEffect(() => {
     async function handleAuth() {
@@ -163,7 +164,7 @@ export default function PlaylistScreen() {
     handleAuth();
   }, [response]);
 
-  // ── Auto mood prediction ──
+  // ── Recommendations ────────────────────────────────────────────────────────
 
   const loadRecommendations = useCallback(async (tk: string, mood: Mood) => {
     setRecLoading(true);
@@ -177,6 +178,8 @@ export default function PlaylistScreen() {
       setRecLoading(false);
     }
   }, []);
+
+  // ── Auto mood prediction from BLE ──────────────────────────────────────────
 
   const predictMood = useCallback(async () => {
     if (bleStatus !== 'connected' || !bleData.heartRate) return;
@@ -198,6 +201,7 @@ export default function PlaylistScreen() {
       const mood = data.mood as Mood;
       setPredictionConf(data.confidence ?? 0);
 
+      // Only apply if user hasn't manually overridden
       if (moodSource !== 'manual') {
         setActiveMood(mood);
         setGlobalMood(mood);
@@ -213,15 +217,16 @@ export default function PlaylistScreen() {
 
   useEffect(() => {
     predictMood();
-    predictTimerRef.current = setInterval(predictMood, AUTO_PREDICT_INTERVAL_MS);
+    predictTimerRef.current = setInterval(predictMood, AUTO_PREDICT_MS);
     return () => { if (predictTimerRef.current) clearInterval(predictTimerRef.current); };
   }, [predictMood]);
 
+  // Load recs when token first arrives and mood is already set
   useEffect(() => {
     if (token && activeMood) loadRecommendations(token, activeMood);
   }, [token]);
 
-  // ── Manual override ──
+  // ── Manual mood override ───────────────────────────────────────────────────
 
   const handleManualMood = useCallback((mood: Mood) => {
     setActiveMood(mood);
@@ -231,7 +236,7 @@ export default function PlaylistScreen() {
     if (token) loadRecommendations(token, mood);
   }, [token, setGlobalMood, loadRecommendations]);
 
-  // ── Generate playlist ──
+  // ── Generate playlist ──────────────────────────────────────────────────────
 
   const handleGeneratePlaylist = useCallback(async () => {
     if (!token || !activeMood) return;
@@ -239,9 +244,12 @@ export default function PlaylistScreen() {
     try {
       const result = await generateMoodPlaylist(token, activeMood, MOOD_EMOJIS[activeMood]);
       setPlaylistUrl(result.playlistUrl);
+      setWasPersonalized(result.personalized);
       Alert.alert(
         'Playlist Created! 🎉',
-        `Added ${result.trackCount} tracks to your Spotify.`,
+        result.personalized
+          ? `Added ${result.trackCount} tracks based on your Spotify taste + ${activeMood} mood.`
+          : `Added ${result.trackCount} tracks for your ${activeMood} mood.`,
         [
           { text: 'Open in Spotify', onPress: () => Linking.openURL(result.playlistUrl) },
           { text: 'Later', style: 'cancel' },
@@ -254,7 +262,7 @@ export default function PlaylistScreen() {
     }
   }, [token, activeMood]);
 
-  // ── Render ──
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   const moodBg: readonly [string, string, string] = activeMood
     ? MOOD_COLORS[activeMood]
@@ -269,7 +277,7 @@ export default function PlaylistScreen() {
           <SubText>Mood-powered music</SubText>
         </View>
 
-        {/* Mood detection card */}
+        {/* ── Mood card ── */}
         <Card style={styles.moodCard}>
           <LinearGradient colors={[moodBg[0], moodBg[1]]} style={StyleSheet.absoluteFill} start={[0,0]} end={[1,1]} />
 
@@ -277,7 +285,7 @@ export default function PlaylistScreen() {
             <Text style={styles.moodCardLabel}>
               {moodSource === 'manual' ? 'YOUR MOOD' : 'DETECTED MOOD'}
             </Text>
-            <View style={[styles.blePill, bleStatus === 'connected' ? {} : { backgroundColor: '#F1F5F9' }]}>
+            <View style={[styles.blePill, bleStatus !== 'connected' && { backgroundColor: '#F1F5F9' }]}>
               {bleStatus === 'connected' && <View style={styles.bleDot} />}
               <Text style={[styles.blePillText, bleStatus !== 'connected' && { color: '#94A3B8' }]}>
                 {bleStatus === 'connected' ? 'Live BLE' : 'No device'}
@@ -327,14 +335,14 @@ export default function PlaylistScreen() {
           </View>
         </Card>
 
-        {/* Spotify section */}
+        {/* ── Spotify section ── */}
         {!token ? (
           <Card style={styles.connectCard}>
             <LinearGradient colors={['#1DB95422', '#1DB95408']} style={StyleSheet.absoluteFill} start={[0,0]} end={[1,1]} />
             <Ionicons name="musical-notes" size={48} color="#1DB954" style={{ marginBottom: 16 }} />
             <Text style={styles.connectTitle}>Connect Spotify</Text>
             <SubText style={{ textAlign: 'center', marginBottom: 20 }}>
-              Login to generate playlists and see your top charts
+              Login to generate personalised playlists based on your taste and mood
             </SubText>
             <Pressable
               disabled={!request}
@@ -348,7 +356,7 @@ export default function PlaylistScreen() {
           <ActivityIndicator size="large" color="#1DB954" style={{ marginTop: 40 }} />
         ) : (
           <>
-            {/* Generate button */}
+            {/* Generate button + open link */}
             {activeMood && (
               <View style={{ marginBottom: 12, gap: 8 }}>
                 <Pressable
@@ -370,14 +378,29 @@ export default function PlaylistScreen() {
                   </Text>
                 </Pressable>
 
+                {/* Personalization hint */}
+                {!generatingPlaylist && !playlistUrl && (
+                  <SubText style={{ textAlign: 'center', fontSize: 11 }}>
+                    {artists.length > 0
+                      ? `Based on your top artists like ${artists.slice(0, 2).map(a => a.name).join(', ')}`
+                      : 'Connect Spotify to personalise based on your taste'}
+                  </SubText>
+                )}
+
                 {playlistUrl && (
-                  <Pressable
-                    onPress={() => Linking.openURL(playlistUrl)}
-                    style={({ pressed }) => [styles.openSpotifyBtn, pressed && { opacity: 0.8 }]}
-                  >
-                    <Ionicons name="open-outline" size={16} color="#1DB954" />
-                    <Text style={styles.openSpotifyText}>Open in Spotify</Text>
-                  </Pressable>
+                  <View style={styles.playlistCreatedRow}>
+                    <Ionicons name="checkmark-circle" size={16} color="#1DB954" />
+                    <Text style={styles.playlistCreatedText}>
+                      {wasPersonalized ? 'Personalised for you' : 'Generated for your mood'}
+                    </Text>
+                    <Pressable
+                      onPress={() => Linking.openURL(playlistUrl)}
+                      style={({ pressed }) => [styles.openSpotifyBtn, pressed && { opacity: 0.8 }]}
+                    >
+                      <Ionicons name="open-outline" size={14} color="#1DB954" />
+                      <Text style={styles.openSpotifyText}>Open in Spotify</Text>
+                    </Pressable>
+                  </View>
                 )}
               </View>
             )}
@@ -385,7 +408,11 @@ export default function PlaylistScreen() {
             {/* Tabs */}
             <View style={[styles.tabBar, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
               {(['charts', 'vibes'] as const).map(t => (
-                <Pressable key={t} onPress={() => setTab(t)} style={[styles.tabBtn, tab === t && styles.tabBtnActive]}>
+                <Pressable
+                  key={t}
+                  onPress={() => setTab(t)}
+                  style={[styles.tabBtn, tab === t && styles.tabBtnActive]}
+                >
                   <Text style={[styles.tabLabel, tab === t && styles.tabLabelActive]}>
                     {t === 'charts' ? 'Top Charts' : `${activeMood ? MOOD_EMOJIS[activeMood] + ' ' : ''}Vibes`}
                   </Text>
@@ -411,8 +438,15 @@ export default function PlaylistScreen() {
             ) : (
               <>
                 <Text style={styles.sectionLabel}>
-                  {activeMood ? `RECOMMENDED FOR ${activeMood.toUpperCase()}` : 'RECOMMENDED TRACKS'}
+                  {activeMood
+                    ? `RECOMMENDED FOR ${activeMood.toUpperCase()}`
+                    : 'RECOMMENDED TRACKS'}
                 </Text>
+                {artists.length > 0 && activeMood && (
+                  <SubText style={{ marginBottom: 8, fontSize: 11 }}>
+                    Picking from artists like {artists.slice(0, 3).map(a => a.name).join(', ')}
+                  </SubText>
+                )}
                 {recLoading ? (
                   <ActivityIndicator size="large" color="#1DB954" style={{ marginTop: 40 }} />
                 ) : recommendedTracks.length > 0 ? (
@@ -422,7 +456,9 @@ export default function PlaylistScreen() {
                 ) : (
                   <Card style={{ padding: 24, alignItems: 'center' }}>
                     <SubText>
-                      {activeMood ? 'Tap "Create playlist" to generate tracks' : 'Select a mood to see recommendations'}
+                      {activeMood
+                        ? 'Tap "Create playlist" to generate tracks'
+                        : 'Select a mood to see recommendations'}
                     </SubText>
                   </Card>
                 )}
@@ -436,6 +472,8 @@ export default function PlaylistScreen() {
     </View>
   );
 }
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   root:           { flex: 1 },
@@ -457,10 +495,12 @@ const styles = StyleSheet.create({
   bleDot:         { width: 6, height: 6, borderRadius: 3, backgroundColor: '#4ADE80' },
   blePillText:    { fontSize: 11, fontWeight: '600', color: '#16A34A' },
 
-  generateBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#1DB954', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 20 },
-  generateBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  openSpotifyBtn:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1, borderColor: '#1DB954', borderRadius: 12, paddingVertical: 10 },
-  openSpotifyText: { color: '#1DB954', fontWeight: '600', fontSize: 14 },
+  generateBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#1DB954', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 20 },
+  generateBtnText:     { color: '#fff', fontWeight: '700', fontSize: 15 },
+  playlistCreatedRow:  { flexDirection: 'row', alignItems: 'center', gap: 6, justifyContent: 'center' },
+  playlistCreatedText: { fontSize: 12, color: '#1DB954', fontWeight: '600', flex: 1 },
+  openSpotifyBtn:      { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: '#1DB954', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
+  openSpotifyText:     { color: '#1DB954', fontWeight: '600', fontSize: 12 },
 
   tabBar:         { flexDirection: 'row', borderRadius: 12, borderWidth: 1, overflow: 'hidden', marginBottom: 12 },
   tabBtn:         { flex: 1, paddingVertical: 10, alignItems: 'center' },
@@ -468,14 +508,14 @@ const styles = StyleSheet.create({
   tabLabel:       { fontWeight: '600', fontSize: 14 },
   tabLabelActive: { color: '#fff' },
 
-  sectionLabel:   { fontSize: 10, fontWeight: '700', color: '#94A3B8', letterSpacing: 0.8, marginBottom: 8 },
-  listCard:       { overflow: 'hidden', marginBottom: 4 },
-  listRow:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
-  rankText:       { width: 28, fontSize: 12, color: '#94A3B8', fontWeight: '600' },
-  thumb:          { width: 46, height: 46, borderRadius: 8, marginRight: 12 },
-  thumbPlaceholder:{ alignItems: 'center', justifyContent: 'center', backgroundColor: '#E2E8F0' },
-  listMeta:       { flex: 1 },
-  listPrimary:    { fontSize: 15, fontWeight: '600', marginBottom: 2 },
+  sectionLabel:     { fontSize: 10, fontWeight: '700', color: '#94A3B8', letterSpacing: 0.8, marginBottom: 8 },
+  listCard:         { overflow: 'hidden', marginBottom: 4 },
+  listRow:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  rankText:         { width: 28, fontSize: 12, color: '#94A3B8', fontWeight: '600' },
+  thumb:            { width: 46, height: 46, borderRadius: 8, marginRight: 12 },
+  thumbPlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#E2E8F0' },
+  listMeta:         { flex: 1 },
+  listPrimary:      { fontSize: 15, fontWeight: '600', marginBottom: 2 },
 
   connectCard:    { alignItems: 'center', paddingVertical: 48, paddingHorizontal: 24, marginTop: 20, overflow: 'hidden' },
   connectTitle:   { fontSize: 22, fontWeight: '700', marginBottom: 8 },
