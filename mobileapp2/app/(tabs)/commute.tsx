@@ -13,7 +13,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { View, Text, SubText, Card, useThemeColors } from '@/components/Themed';
 import { useBle } from '@/lib/BleContext';
 
-const API_URL = 'https://7685-141-117-117-240.ngrok-free.app/api/transit/next';
+const API_URL = 'https://ac00-173-35-246-197.ngrok-free.app/api/transit/next';
 const STORAGE_KEY = 'commute_selected_line';
 const REFRESH_INTERVAL = 30_000;
 
