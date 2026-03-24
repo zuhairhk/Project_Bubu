@@ -10,7 +10,6 @@ async function spotifyFetch(path: string, token: string, options?: RequestInit) 
     },
   });
   if (!res.ok) throw new Error(`Spotify ${path} failed: ${res.status}`);
-  // 204 No Content — return empty object
   if (res.status === 204) return {};
   return res.json();
 }
@@ -34,68 +33,62 @@ export async function getUserProfile(token: string): Promise<{ id: string; displ
   return spotifyFetch('/me', token);
 }
 
-// ─── Mood-based recommendations ──────────────────────────────────────────────
+// ─── Mood search queries ──────────────────────────────────────────────────────
+// Spotify deprecated /recommendations in Nov 2024.
+// We use multiple targeted search queries per mood and merge results instead.
 
-// Audio feature targets per mood — tuned to match your ML training profiles
-const MOOD_SEEDS: Record<string, {
-  seed_genres: string[];
-  target_energy: number;
-  target_valence: number;
-  target_tempo: number;
-  min_energy?: number;
-  max_energy?: number;
-  min_valence?: number;
-  max_valence?: number;
-}> = {
-  happy: {
-    seed_genres:    ['pop', 'dance', 'happy'],
-    target_energy:  0.80,
-    target_valence: 0.90,
-    target_tempo:   120,
-    min_energy:     0.60,
-    min_valence:    0.70,
-  },
-  neutral: {
-    seed_genres:    ['indie', 'chill', 'pop'],
-    target_energy:  0.45,
-    target_valence: 0.50,
-    target_tempo:   100,
-    min_energy:     0.30,
-    max_energy:     0.65,
-    min_valence:    0.35,
-    max_valence:    0.65,
-  },
-  stressed: {
-    seed_genres:    ['ambient', 'chill', 'study'],
-    target_energy:  0.30,
-    target_valence: 0.55,
-    target_tempo:   80,
-    max_energy:     0.50,
-    min_valence:    0.40,
-  },
-  angry: {
-    seed_genres:    ['chill', 'acoustic', 'soul'],
-    target_energy:  0.35,
-    target_valence: 0.60,
-    target_tempo:   85,
-    max_energy:     0.55,
-    min_valence:    0.45,
-  },
-  sad: {
-    seed_genres:    ['sad', 'indie', 'singer-songwriter'],
-    target_energy:  0.25,
-    target_valence: 0.25,
-    target_tempo:   75,
-    max_energy:     0.45,
-    max_valence:    0.45,
-  },
-  sleepy: {
-    seed_genres:    ['sleep', 'ambient', 'classical'],
-    target_energy:  0.10,
-    target_valence: 0.35,
-    target_tempo:   65,
-    max_energy:     0.25,
-  },
+const MOOD_QUERIES: Record<string, string[]> = {
+  happy: [
+    'genre:pop mood:happy upbeat feel good',
+    'genre:dance energetic positive vibes',
+    'happy pop hits',
+    'feel good summer songs',
+    'upbeat indie pop',
+  ],
+  neutral: [
+    'genre:indie chill easy listening',
+    'lo-fi chill study beats',
+    'mellow indie pop',
+    'background chill music',
+    'acoustic soft pop',
+  ],
+  stressed: [
+    'genre:ambient calming relaxing',
+    'stress relief calm meditation music',
+    'peaceful acoustic chill',
+    'gentle piano relax',
+    'lo-fi calming focus',
+  ],
+  angry: [
+    'genre:soul calming soothing R&B',
+    'acoustic calm mellow',
+    'peaceful indie folk',
+    'soft chill vibes relax',
+    'gentle acoustic singer songwriter',
+  ],
+  sad: [
+    'genre:indie sad melancholy',
+    'sad songs heartbreak indie',
+    'melancholic singer songwriter',
+    'emotional ballads',
+    'rainy day sad playlist',
+  ],
+  sleepy: [
+    'genre:ambient sleep music',
+    'gentle piano sleep relaxing',
+    'classical slow peaceful',
+    'sleep lo-fi soft',
+    'ambient drone calm',
+  ],
+};
+
+export type SpotifyTrack = {
+  id:      string;
+  uri:     string;
+  name:    string;
+  artists: { name: string }[];
+  album:   { name: string; images: { url: string }[] };
+  external_urls: { spotify: string };
 };
 
 export async function getMoodRecommendations(
@@ -103,26 +96,34 @@ export async function getMoodRecommendations(
   mood: string,
   limit = 20,
 ): Promise<{ tracks: SpotifyTrack[] }> {
-  const seeds = MOOD_SEEDS[mood] ?? MOOD_SEEDS['neutral'];
+  const queries = MOOD_QUERIES[mood] ?? MOOD_QUERIES['neutral'];
 
-  const params = new URLSearchParams({
-    limit:          String(limit),
-    seed_genres:    seeds.seed_genres.slice(0, 5).join(','),
-    target_energy:  String(seeds.target_energy),
-    target_valence: String(seeds.target_valence),
-    target_tempo:   String(seeds.target_tempo),
-  });
+  // Run 2-3 searches in parallel, each returning limit/2 tracks
+  const perQuery = Math.ceil(limit / 2);
+  const selectedQueries = queries.slice(0, 2);
 
-  if (seeds.min_energy  !== undefined) params.set('min_energy',  String(seeds.min_energy));
-  if (seeds.max_energy  !== undefined) params.set('max_energy',  String(seeds.max_energy));
-  if (seeds.min_valence !== undefined) params.set('min_valence', String(seeds.min_valence));
-  if (seeds.max_valence !== undefined) params.set('max_valence', String(seeds.max_valence));
+  const results = await Promise.allSettled(
+    selectedQueries.map(q => searchTracks(token, q, perQuery)),
+  );
 
-  const result = await spotifyFetch(`/recommendations?${params.toString()}`, token);
-  return { tracks: result.tracks ?? [] };
+  const seen = new Set<string>();
+  const tracks: SpotifyTrack[] = [];
+
+  for (const result of results) {
+    if (result.status !== 'fulfilled') continue;
+    const items: SpotifyTrack[] = result.value?.tracks?.items ?? [];
+    for (const track of items) {
+      if (!seen.has(track.id) && tracks.length < limit) {
+        seen.add(track.id);
+        tracks.push(track);
+      }
+    }
+  }
+
+  return { tracks };
 }
 
-// ─── Playlist creation ───────────────────────────────────────────────────────
+// ─── Playlist creation ────────────────────────────────────────────────────────
 
 export async function createPlaylist(
   token: string,
@@ -132,11 +133,7 @@ export async function createPlaylist(
 ): Promise<{ id: string; external_urls: { spotify: string } }> {
   return spotifyFetch(`/users/${userId}/playlists`, token, {
     method: 'POST',
-    body: JSON.stringify({
-      name,
-      description,
-      public: false,
-    }),
+    body: JSON.stringify({ name, description, public: false }),
   });
 }
 
@@ -151,7 +148,7 @@ export async function addTracksToPlaylist(
   });
 }
 
-// ─── Full flow: generate mood playlist and return Spotify URL ─────────────────
+// ─── Full generate flow ───────────────────────────────────────────────────────
 
 export async function generateMoodPlaylist(
   token: string,
@@ -164,14 +161,14 @@ export async function generateMoodPlaylist(
   ]);
 
   const tracks = recResult.tracks;
-  if (tracks.length === 0) throw new Error('No recommendations returned from Spotify');
+  if (tracks.length === 0) throw new Error('No tracks found for this mood');
 
-  const date  = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD
-  const name  = `${moodEmoji} ${mood.charAt(0).toUpperCase() + mood.slice(1)} Vibes — ${date}`;
-  const desc  = `Auto-generated by Commubu based on your ${mood} mood on ${date}`;
+  const date    = new Date().toLocaleDateString('en-CA');
+  const name    = `${moodEmoji} ${mood.charAt(0).toUpperCase() + mood.slice(1)} Vibes — ${date}`;
+  const desc    = `Auto-generated by Commubu for your ${mood} mood on ${date}`;
 
   const playlist = await createPlaylist(token, profile.id, name, desc);
-  const uris     = tracks.map((t: SpotifyTrack) => t.uri);
+  const uris     = tracks.map(t => t.uri);
   await addTracksToPlaylist(token, playlist.id, uris);
 
   return {
@@ -179,14 +176,3 @@ export async function generateMoodPlaylist(
     trackCount:  tracks.length,
   };
 }
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-export type SpotifyTrack = {
-  id:      string;
-  uri:     string;
-  name:    string;
-  artists: { name: string }[];
-  album:   { name: string; images: { url: string }[] };
-  external_urls: { spotify: string };
-};
