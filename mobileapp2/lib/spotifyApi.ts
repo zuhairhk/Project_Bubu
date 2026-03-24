@@ -9,7 +9,11 @@ async function spotifyFetch(path: string, token: string, options?: RequestInit) 
       ...(options?.headers ?? {}),
     },
   });
-  if (!res.ok) throw new Error(`Spotify ${path} failed: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text();
+    console.error(`Spotify ${path} failed ${res.status}:`, body); // ADD THIS
+    throw new Error(`Spotify ${path} failed: ${res.status}`);
+  }
   if (res.status === 204) return {};
   return res.json();
 }
