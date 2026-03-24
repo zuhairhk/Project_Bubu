@@ -5,51 +5,58 @@ import {
   TouchableOpacity,
   Modal,
   ActivityIndicator,
+  View,
+  Text,
+  StatusBar,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
-import { View, Text, SubText, Card, useThemeColors } from '@/components/Themed';
 import { useBle } from '@/lib/BleContext';
 
-const API_URL = 'https://ac00-173-35-246-197.ngrok-free.app/api/transit/next';
-const STORAGE_KEY = 'commute_selected_line';
-const REFRESH_INTERVAL = 30_000;
-
-const GO_LINES = [
-  { id: 'Lakeshore East',  label: 'Lakeshore East',  color: '#FF5C5C' },
-  { id: 'Lakeshore West',  label: 'Lakeshore West',  color: '#FF5C5C' },
-  { id: 'Kitchener',       label: 'Kitchener',        color: '#34D399' },
-  { id: 'Barrie',          label: 'Barrie',           color: '#60A5FA' },
-  { id: 'Stouffville',     label: 'Stouffville',      color: '#A78BFA' },
-  { id: 'Richmond Hill',   label: 'Richmond Hill',    color: '#38BDF8' },
-  { id: 'Milton',          label: 'Milton',           color: '#FBBF24' },
-];
-
-const COLORS = {
-  bg:         '#0D0F14',
-  surface:    '#161A23',
-  surfaceAlt: '#1C2130',
-  border:     '#252B3B',
-  borderSoft: '#1E2433',
-  textPrimary:'#F0F4FF',
-  textSec:    '#6B7A99',
-  textTert:   '#3D4A66',
-  urgent:     '#FF5C5C',
-  warn:       '#FF9F40',
-  caution:    '#FFCC57',
-  safe:       '#34D399',
+// ─── Design tokens (shared with home + biometrics) ────────────────────────────
+const C = {
+  bg:       '#F2F2F7',
+  card:     '#FFFFFF',
+  text:     '#000000',
+  textSec:  '#3C3C43',
+  textTert: '#8E8E93',
+  sep:      '#C6C6C8',
+  blue:     '#007AFF',
+  green:    '#34C759',
+  orange:   '#FF9500',
+  red:      '#FF3B30',
+  indigo:   '#5856D6',
 };
 
+const cardShadow = {
+  shadowColor:   '#000',
+  shadowOpacity: 0.06,
+  shadowRadius:  12,
+  shadowOffset:  { width: 0, height: 2 },
+  elevation:     3,
+};
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const API_URL        = 'https://7685-141-117-117-240.ngrok-free.app/api/transit/next';
+const STORAGE_KEY    = 'commute_selected_line';
+const REFRESH_MS     = 30_000;
+
+const GO_LINES = [
+  { id: 'Lakeshore East',  label: 'Lakeshore East',  color: '#FF3B30' },
+  { id: 'Lakeshore West',  label: 'Lakeshore West',  color: '#FF3B30' },
+  { id: 'Kitchener',       label: 'Kitchener',        color: '#34C759' },
+  { id: 'Barrie',          label: 'Barrie',           color: '#007AFF' },
+  { id: 'Stouffville',     label: 'Stouffville',      color: '#AF52DE' },
+  { id: 'Richmond Hill',   label: 'Richmond Hill',    color: '#32ADE6' },
+  { id: 'Milton',          label: 'Milton',           color: '#FF9500' },
+];
+
 interface Departure {
-  line: string;
-  destination: string;
-  time: string;
-  platform: string;
-  status: string;
+  line: string; destination: string; time: string; platform: string; status: string;
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function useClock() {
   const [now, setNow] = useState(new Date());
   useEffect(() => {
@@ -59,26 +66,26 @@ function useClock() {
   return now;
 }
 
-function formatTime(d: Date) {
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-function formatDate(d: Date) {
-  return d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
-}
-function parseTime(iso: string): Date { return new Date(iso); }
-function minutesUntil(target: Date, now: Date): number {
+function parseTime(iso: string) { return new Date(iso); }
+function minutesUntil(target: Date, now: Date) {
   return Math.round((target.getTime() - now.getTime()) / 60000);
 }
-function formatDepartureTime(iso: string): string {
+function fmtTime(d: Date) {
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+function fmtDate(d: Date) {
+  return d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+}
+function fmtDep(iso: string) {
   return parseTime(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
-function urgencyColor(mins: number): string {
-  if (mins <= 3)  return COLORS.urgent;
-  if (mins <= 8)  return COLORS.warn;
-  if (mins <= 15) return COLORS.caution;
-  return COLORS.safe;
+function urgColor(mins: number) {
+  if (mins <= 3)  return C.red;
+  if (mins <= 8)  return C.orange;
+  if (mins <= 15) return '#FFCC00';
+  return C.green;
 }
-function urgencyLabel(mins: number): string {
+function urgLabel(mins: number) {
   if (mins < 0)   return 'Departed';
   if (mins === 0) return 'Now';
   if (mins <= 3)  return 'Run!';
@@ -87,34 +94,37 @@ function urgencyLabel(mins: number): string {
   return 'On time';
 }
 
-function LinePickerModal({ visible, selected, onSelect, onClose }: {
+// ─── Line picker modal ────────────────────────────────────────────────────────
+function LinePicker({ visible, selected, onSelect, onClose }: {
   visible: boolean; selected: string | null;
   onSelect: (id: string) => void; onClose: () => void;
 }) {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={pickerStyles.overlay}>
-        <View style={pickerStyles.sheet}>
-          <View style={pickerStyles.handle} />
-          <Text style={pickerStyles.title}>Select GO Line</Text>
-          <SubText style={pickerStyles.subtitle}>Departures from Union Station</SubText>
-          {GO_LINES.map((line) => {
+      <View style={P.overlay}>
+        <View style={P.sheet}>
+          <View style={P.handle} />
+          <Text style={P.title}>Select GO Line</Text>
+          <Text style={P.sub}>Departures from Union Station</Text>
+          {GO_LINES.map(line => {
             const active = selected === line.id;
             return (
               <TouchableOpacity
                 key={line.id}
-                style={[pickerStyles.option, active && { backgroundColor: line.color + '15', borderColor: line.color + '60' }]}
                 onPress={() => { onSelect(line.id); onClose(); }}
                 activeOpacity={0.7}
+                style={[P.option, active && { backgroundColor: line.color + '10' }]}
               >
-                <View style={[pickerStyles.lineBar, { backgroundColor: line.color }]} />
-                <Text style={[pickerStyles.optionText, active && { color: line.color }]}>{line.label}</Text>
-                {active && <View style={[pickerStyles.activeDot, { backgroundColor: line.color }]} />}
+                <View style={[P.lineBar, { backgroundColor: line.color }]} />
+                <Text style={[P.optionText, active && { color: line.color, fontWeight: '700' }]}>
+                  {line.label}
+                </Text>
+                {active && <Ionicons name="checkmark" size={16} color={line.color} />}
               </TouchableOpacity>
             );
           })}
-          <TouchableOpacity style={pickerStyles.cancel} onPress={onClose} activeOpacity={0.7}>
-            <Text style={pickerStyles.cancelText}>Cancel</Text>
+          <TouchableOpacity onPress={onClose} style={P.cancel}>
+            <Text style={P.cancelText}>Cancel</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -122,177 +132,165 @@ function LinePickerModal({ visible, selected, onSelect, onClose }: {
   );
 }
 
-const pickerStyles = StyleSheet.create({
-  overlay:    { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.7)' },
-  sheet:      { backgroundColor: COLORS.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24, paddingBottom: 44, borderTopWidth: 1, borderColor: COLORS.border },
-  handle:     { width: 36, height: 3, borderRadius: 2, backgroundColor: COLORS.border, alignSelf: 'center', marginBottom: 24 },
-  title:      { fontSize: 18, fontWeight: '700', color: COLORS.textPrimary, textAlign: 'center', marginBottom: 4 },
-  subtitle:   { fontSize: 13, color: COLORS.textSec, textAlign: 'center', marginBottom: 20 },
-  option:     { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 12, borderWidth: 1, borderColor: COLORS.border, marginBottom: 8, backgroundColor: COLORS.surfaceAlt },
-  lineBar:    { width: 3, height: 18, borderRadius: 2, marginRight: 12 },
-  optionText: { flex: 1, fontSize: 15, fontWeight: '500', color: COLORS.textPrimary },
-  activeDot:  { width: 7, height: 7, borderRadius: 4 },
-  cancel:     { alignItems: 'center', paddingVertical: 16, marginTop: 4 },
-  cancelText: { color: COLORS.textSec, fontWeight: '600', fontSize: 15 },
+const P = StyleSheet.create({
+  overlay:    { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
+  sheet:      { backgroundColor: C.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 48 },
+  handle:     { width: 36, height: 4, borderRadius: 2, backgroundColor: C.sep, alignSelf: 'center', marginBottom: 20 },
+  title:      { fontSize: 18, fontWeight: '700', color: C.text, textAlign: 'center', marginBottom: 4 },
+  sub:        { fontSize: 13, color: C.textTert, textAlign: 'center', marginBottom: 20 },
+  option:     { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, borderRadius: 12, marginBottom: 6, backgroundColor: C.bg },
+  lineBar:    { width: 4, height: 20, borderRadius: 2, marginRight: 14 },
+  optionText: { flex: 1, fontSize: 15, fontWeight: '500', color: C.text },
+  cancel:     { marginTop: 8, paddingVertical: 16, alignItems: 'center' },
+  cancelText: { fontSize: 16, fontWeight: '600', color: C.blue },
 });
 
-function NextTrainCard({ departure, now, lineColor }: { departure: Departure; now: Date; lineColor: string }) {
-  const mins = minutesUntil(parseTime(departure.time), now);
-  const urgColor = urgencyColor(mins);
-  const isProceed = departure.status.toLowerCase().includes('proceed');
+// ─── Next train card ──────────────────────────────────────────────────────────
+function NextTrainCard({ dep, now, lineColor }: { dep: Departure; now: Date; lineColor: string }) {
+  const mins    = minutesUntil(parseTime(dep.time), now);
+  const uc      = urgColor(mins);
+  const ul      = urgLabel(mins);
+  const proceed = dep.status.toLowerCase().includes('proceed');
 
   return (
-    <View style={nextStyles.card}>
-      <View style={[nextStyles.accentBar, { backgroundColor: lineColor }]} />
-      <View style={nextStyles.inner}>
-        <View style={nextStyles.headerRow}>
-          <View style={nextStyles.lineTag}>
-            <View style={[nextStyles.lineTagDot, { backgroundColor: lineColor }]} />
-            <Text style={nextStyles.lineTagText}>{departure.line.toUpperCase()}</Text>
+    <View style={[NT.card, { ...cardShadow }]}>
+      {/* Colour accent bar */}
+      <View style={[NT.bar, { backgroundColor: lineColor }]} />
+
+      <View style={NT.inner}>
+        {/* Line tag + urgency */}
+        <View style={NT.topRow}>
+          <View style={NT.lineTag}>
+            <View style={[NT.dot, { backgroundColor: lineColor }]} />
+            <Text style={[NT.lineText, { color: lineColor }]}>{dep.line.toUpperCase()}</Text>
           </View>
-          <View style={[nextStyles.urgBadge, { backgroundColor: urgColor + '18', borderColor: urgColor + '40' }]}>
-            <View style={[nextStyles.urgDot, { backgroundColor: urgColor }]} />
-            <Text style={[nextStyles.urgText, { color: urgColor }]}>{urgencyLabel(mins)}</Text>
+          <View style={[NT.urgBadge, { backgroundColor: uc + '15' }]}>
+            <Text style={[NT.urgText, { color: uc }]}>{ul}</Text>
           </View>
         </View>
-        <Text style={nextStyles.destination}>{departure.destination}</Text>
-        <View style={nextStyles.divider} />
-        <View style={nextStyles.countRow}>
+
+        {/* Destination */}
+        <Text style={NT.dest}>{dep.destination}</Text>
+
+        {/* Countdown row */}
+        <View style={NT.countRow}>
           <View>
-            <Text style={[nextStyles.countNum, { color: urgColor }]}>{mins < 0 ? '—' : mins}</Text>
-            <Text style={nextStyles.countLabel}>minutes away</Text>
+            <Text style={[NT.countNum, { color: uc }]}>{mins < 0 ? '—' : mins}</Text>
+            <Text style={NT.countLabel}>minutes away</Text>
           </View>
-          <View style={nextStyles.metaCol}>
-            <View style={nextStyles.metaChip}>
-              <Ionicons name="time-outline" size={12} color={COLORS.textSec} />
-              <Text style={nextStyles.metaText}>{formatDepartureTime(departure.time)}</Text>
+          <View style={NT.metaCol}>
+            <View style={NT.chip}>
+              <Ionicons name="time-outline" size={12} color={C.textTert} />
+              <Text style={NT.chipText}>{fmtDep(dep.time)}</Text>
             </View>
-            {departure.platform && departure.platform !== '-' && (
-              <View style={[nextStyles.metaChip, { backgroundColor: lineColor + '18', borderColor: lineColor + '35' }]}>
+            {dep.platform && dep.platform !== '-' && (
+              <View style={[NT.chip, { backgroundColor: lineColor + '12' }]}>
                 <Ionicons name="location-outline" size={12} color={lineColor} />
-                <Text style={[nextStyles.metaText, { color: lineColor, fontWeight: '700' }]}>
-                  Platform {departure.platform}
+                <Text style={[NT.chipText, { color: lineColor, fontWeight: '700' }]}>
+                  Platform {dep.platform}
                 </Text>
               </View>
             )}
           </View>
         </View>
-        <View style={[nextStyles.statusRow, { borderColor: COLORS.borderSoft }]}>
-          <View style={[nextStyles.statusDot, { backgroundColor: isProceed ? COLORS.safe : COLORS.warn }]} />
-          <Text style={[nextStyles.statusText, { color: isProceed ? COLORS.safe : COLORS.warn }]}>
-            {departure.status}
-          </Text>
+
+        {/* Status */}
+        <View style={NT.statusRow}>
+          <View style={[NT.statusDot, { backgroundColor: proceed ? C.green : C.orange }]} />
+          <Text style={[NT.statusText, { color: proceed ? C.green : C.orange }]}>{dep.status}</Text>
         </View>
       </View>
     </View>
   );
 }
 
-const nextStyles = StyleSheet.create({
-  card:        { backgroundColor: COLORS.surface, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden', marginBottom: 12 },
-  accentBar:   { height: 3, width: '100%' },
-  inner:       { padding: 18 },
-  headerRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  lineTag:     { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  lineTagDot:  { width: 6, height: 6, borderRadius: 3 },
-  lineTagText: { fontSize: 11, fontWeight: '700', color: COLORS.textSec, letterSpacing: 0.8 },
-  urgBadge:    { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 20, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 5 },
-  urgDot:      { width: 6, height: 6, borderRadius: 3 },
-  urgText:     { fontSize: 12, fontWeight: '700' },
-  destination: { fontSize: 26, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 16, letterSpacing: -0.5 },
-  divider:     { height: 1, backgroundColor: COLORS.borderSoft, marginBottom: 16 },
-  countRow:    { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 16 },
-  countNum:    { fontSize: 64, fontWeight: '800', lineHeight: 68, letterSpacing: -3 },
-  countLabel:  { fontSize: 13, color: COLORS.textSec, fontWeight: '500', marginBottom: 6 },
-  metaCol:     { alignItems: 'flex-end', gap: 8 },
-  metaChip:    { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: COLORS.surfaceAlt, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: COLORS.border },
-  metaText:    { fontSize: 12, fontWeight: '600', color: COLORS.textSec },
-  statusRow:   { flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: 1, paddingTop: 14 },
-  statusDot:   { width: 7, height: 7, borderRadius: 4 },
-  statusText:  { fontSize: 13, fontWeight: '500' },
+const NT = StyleSheet.create({
+  card:       { backgroundColor: C.card, borderRadius: 20, overflow: 'hidden', marginBottom: 12 },
+  bar:        { height: 4, width: '100%' },
+  inner:      { padding: 18 },
+  topRow:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  lineTag:    { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  dot:        { width: 7, height: 7, borderRadius: 4 },
+  lineText:   { fontSize: 11, fontWeight: '700', letterSpacing: 0.8 },
+  urgBadge:   { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
+  urgText:    { fontSize: 12, fontWeight: '700' },
+  dest:       { fontSize: 24, fontWeight: '700', color: C.text, letterSpacing: -0.3, marginBottom: 16 },
+  countRow:   { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 16 },
+  countNum:   { fontSize: 64, fontWeight: '800', lineHeight: 68, letterSpacing: -3 },
+  countLabel: { fontSize: 12, color: C.textTert, marginBottom: 8 },
+  metaCol:    { alignItems: 'flex-end', gap: 8 },
+  chip:       { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.bg, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+  chipText:   { fontSize: 12, fontWeight: '600', color: C.textTert },
+  statusRow:  { flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.sep, paddingTop: 14 },
+  statusDot:  { width: 7, height: 7, borderRadius: 4 },
+  statusText: { fontSize: 13, fontWeight: '500' },
 });
 
-function UpcomingRow({ departure, now, lineColor, isLast }: { departure: Departure; now: Date; lineColor: string; isLast: boolean }) {
-  const mins = minutesUntil(parseTime(departure.time), now);
-  const urgColor = urgencyColor(mins);
+// ─── Upcoming row ─────────────────────────────────────────────────────────────
+function UpcomingRow({ dep, now, lineColor, isLast }: {
+  dep: Departure; now: Date; lineColor: string; isLast: boolean;
+}) {
+  const mins = minutesUntil(parseTime(dep.time), now);
+  const uc   = urgColor(mins);
   return (
-    <View style={[upStyles.row, !isLast && { borderBottomWidth: 1, borderBottomColor: COLORS.borderSoft }]}>
-      <View style={upStyles.timelineCol}>
-        <View style={[upStyles.dot, { backgroundColor: lineColor }]} />
-        {!isLast && <View style={[upStyles.line, { backgroundColor: lineColor + '25' }]} />}
+    <View style={[UP.row, !isLast && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.sep }]}>
+      <View style={UP.timeline}>
+        <View style={[UP.tDot, { backgroundColor: lineColor }]} />
+        {!isLast && <View style={[UP.tLine, { backgroundColor: lineColor + '30' }]} />}
       </View>
-      <View style={upStyles.info}>
-        <Text style={upStyles.dest}>{departure.destination}</Text>
-        <Text style={upStyles.subLine}>{departure.line}</Text>
+      <View style={UP.info}>
+        <Text style={UP.dest}>{dep.destination}</Text>
+        <Text style={UP.line}>{dep.line}</Text>
       </View>
-      <View style={upStyles.right}>
-        <Text style={upStyles.time}>{formatDepartureTime(departure.time)}</Text>
-        <Text style={[upStyles.mins, { color: urgColor }]}>{mins < 0 ? 'Gone' : `${mins}m`}</Text>
+      <View style={UP.right}>
+        <Text style={UP.time}>{fmtDep(dep.time)}</Text>
+        <Text style={[UP.mins, { color: uc }]}>{mins < 0 ? 'Gone' : `${mins}m`}</Text>
       </View>
-      {departure.platform && departure.platform !== '-' && (
-        <View style={[upStyles.platBadge, { backgroundColor: lineColor + '15' }]}>
-          <Text style={[upStyles.platText, { color: lineColor }]}>{departure.platform}</Text>
+      {dep.platform && dep.platform !== '-' && (
+        <View style={[UP.platBadge, { backgroundColor: lineColor + '15' }]}>
+          <Text style={[UP.platText, { color: lineColor }]}>{dep.platform}</Text>
         </View>
       )}
     </View>
   );
 }
 
-const upStyles = StyleSheet.create({
-  row:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 14 },
-  timelineCol: { width: 18, alignItems: 'center', marginRight: 14, alignSelf: 'stretch' },
-  dot:         { width: 8, height: 8, borderRadius: 4, marginTop: 5 },
-  line:        { flex: 1, width: 2, marginTop: 4 },
-  info:        { flex: 1 },
-  dest:        { fontSize: 14, fontWeight: '600', color: COLORS.textPrimary, marginBottom: 2 },
-  subLine:     { fontSize: 12, color: COLORS.textSec },
-  right:       { alignItems: 'flex-end', marginRight: 10 },
-  time:        { fontSize: 14, fontWeight: '600', color: COLORS.textPrimary },
-  mins:        { fontSize: 12, fontWeight: '600', marginTop: 2 },
-  platBadge:   { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-  platText:    { fontSize: 11, fontWeight: '700' },
+const UP = StyleSheet.create({
+  row:      { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 },
+  timeline: { width: 18, alignItems: 'center', marginRight: 14, alignSelf: 'stretch' },
+  tDot:     { width: 8, height: 8, borderRadius: 4, marginTop: 5 },
+  tLine:    { flex: 1, width: 2, marginTop: 4 },
+  info:     { flex: 1 },
+  dest:     { fontSize: 14, fontWeight: '600', color: C.text, marginBottom: 2 },
+  line:     { fontSize: 12, color: C.textTert },
+  right:    { alignItems: 'flex-end', marginRight: 10 },
+  time:     { fontSize: 14, fontWeight: '600', color: C.text },
+  mins:     { fontSize: 12, fontWeight: '600', marginTop: 2 },
+  platBadge:{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  platText: { fontSize: 11, fontWeight: '700' },
 });
 
-function StatRow({ icon, label, value, color }: { icon: keyof typeof Ionicons.glyphMap; label: string; value: string; color: string }) {
-  return (
-    <View style={statStyles.row}>
-      <View style={[statStyles.iconBox, { backgroundColor: color + '15' }]}>
-        <Ionicons name={icon} size={18} color={color} />
-      </View>
-      <View style={statStyles.textCol}>
-        <Text style={statStyles.label}>{label}</Text>
-        <Text style={statStyles.value}>{value}</Text>
-      </View>
-    </View>
-  );
-}
-
-const statStyles = StyleSheet.create({
-  row:     { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 14 },
-  iconBox: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: 14 },
-  textCol: { flex: 1 },
-  label:   { fontSize: 12, color: COLORS.textSec, marginBottom: 3 },
-  value:   { fontSize: 15, fontWeight: '600', color: COLORS.textPrimary },
-});
-
+// ─── Main screen ──────────────────────────────────────────────────────────────
 export default function CommuteScreen() {
   const insets = useSafeAreaInsets();
-  const now = useClock();
+  const now    = useClock();
   const { data, status } = useBle();
   const { steps, distance } = data;
 
-  const [selectedLine, setSelectedLine] = useState<string | null>(null);
+  const [selectedLine,  setSelectedLine]  = useState<string | null>(null);
   const [pickerVisible, setPickerVisible] = useState(false);
-  const [departures, setDepartures] = useState<Departure[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [departures,    setDepartures]    = useState<Departure[]>([]);
+  const [loading,       setLoading]       = useState(false);
+  const [lastUpdated,   setLastUpdated]   = useState<Date | null>(null);
+  const [fetchError,    setFetchError]    = useState<string | null>(null);
 
-  const lineInfo = GO_LINES.find((l) => l.id === selectedLine);
-  const lineColor = lineInfo?.color ?? COLORS.safe;
+  const lineInfo  = GO_LINES.find(l => l.id === selectedLine);
+  const lineColor = lineInfo?.color ?? C.blue;
+  const nextTrain = departures[0] ?? null;
+  const upcoming  = departures.slice(1);
 
   useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY).then((val) => { if (val) setSelectedLine(val); });
+    AsyncStorage.getItem(STORAGE_KEY).then(val => { if (val) setSelectedLine(val); });
   }, []);
 
   const handleSelectLine = useCallback((id: string) => {
@@ -303,20 +301,20 @@ export default function CommuteScreen() {
   const fetchDepartures = useCallback(async () => {
     if (!selectedLine) return;
     setLoading(true);
-    setError(null);
+    setFetchError(null);
     try {
-      const res = await fetch(API_URL, { headers: { 'ngrok-skip-browser-warning': '1' } });
+      const res  = await fetch(API_URL, { headers: { 'ngrok-skip-browser-warning': '1' } });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       const all: Departure[] = json.departures ?? [];
       const filtered = all
-        .filter((d) => d.line.toLowerCase().includes(selectedLine.toLowerCase()))
-        .filter((d) => minutesUntil(parseTime(d.time), new Date()) > -2)
+        .filter(d => d.line.toLowerCase().includes(selectedLine.toLowerCase()))
+        .filter(d => minutesUntil(parseTime(d.time), new Date()) > -2)
         .slice(0, 5);
       setDepartures(filtered);
       setLastUpdated(new Date());
     } catch (e: any) {
-      setError(e.message ?? 'Failed to fetch');
+      setFetchError(e.message ?? 'Failed to fetch');
     } finally {
       setLoading(false);
     }
@@ -324,89 +322,108 @@ export default function CommuteScreen() {
 
   useEffect(() => {
     fetchDepartures();
-    const id = setInterval(fetchDepartures, REFRESH_INTERVAL);
+    const id = setInterval(fetchDepartures, REFRESH_MS);
     return () => clearInterval(id);
   }, [fetchDepartures]);
 
-  const nextTrain = departures[0] ?? null;
-  const upcoming = departures.slice(1);
-
   return (
-    <View style={[S.root, { backgroundColor: COLORS.bg }]}>
-      <LinePickerModal visible={pickerVisible} selected={selectedLine} onSelect={handleSelectLine} onClose={() => setPickerVisible(false)} />
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={[S.scroll, { paddingTop: insets.top + 16 }]}>
+    <View style={[S.root, { paddingTop: insets.top }]}>
+      <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
+      <LinePicker
+        visible={pickerVisible}
+        selected={selectedLine}
+        onSelect={handleSelectLine}
+        onClose={() => setPickerVisible(false)}
+      />
 
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={S.scroll}>
+
+        {/* Header */}
         <View style={S.header}>
-          <Text style={S.title}>Commute</Text>
-          <Text style={S.subtitle}>Union Station</Text>
+          <View>
+            <Text style={S.title}>Commute</Text>
+            <Text style={S.subtitle}>Union Station</Text>
+          </View>
+          <TouchableOpacity onPress={fetchDepartures} disabled={loading} style={S.refreshBtn}>
+            {loading
+              ? <ActivityIndicator size="small" color={C.blue} />
+              : <Ionicons name="refresh-outline" size={18} color={C.blue} />
+            }
+          </TouchableOpacity>
         </View>
 
-        <View style={S.clockCard}>
-          <Text style={S.clockTime}>{formatTime(now)}</Text>
-          <Text style={S.clockDate}>{formatDate(now)}</Text>
+        {/* Clock card */}
+        <View style={[S.clockCard, cardShadow]}>
+          <Text style={S.clockTime}>{fmtTime(now)}</Text>
+          <Text style={S.clockDate}>{fmtDate(now)}</Text>
         </View>
 
-        <TouchableOpacity onPress={() => setPickerVisible(true)} activeOpacity={0.8} style={[S.lineSelector, lineInfo && { borderColor: lineColor + '50' }]}>
+        {/* Line selector */}
+        <TouchableOpacity
+          onPress={() => setPickerVisible(true)}
+          activeOpacity={0.8}
+          style={[S.lineSelector, cardShadow]}
+        >
           <View style={[S.lineSelectorBar, { backgroundColor: lineColor }]} />
           <View style={S.lineSelectorContent}>
             <Text style={S.lineSelectorLabel}>YOUR GO LINE</Text>
-            <Text style={[S.lineSelectorValue, lineInfo && { color: lineColor }]}>
+            <Text style={[S.lineSelectorValue, { color: lineInfo ? lineColor : C.textTert }]}>
               {lineInfo ? lineInfo.label : 'Select a line'}
             </Text>
           </View>
-          <Ionicons name="chevron-down" size={16} color={lineInfo ? lineColor : COLORS.textSec} />
+          <Ionicons name="chevron-down" size={16} color={C.textTert} />
         </TouchableOpacity>
 
+        {/* Departures */}
         {selectedLine && (
           <>
             <View style={S.sectionRow}>
               <Text style={S.sectionLabel}>NEXT DEPARTURE</Text>
-              <TouchableOpacity onPress={fetchDepartures} disabled={loading} style={S.refreshBtn} activeOpacity={0.7}>
-                {loading ? (
-                  <ActivityIndicator size="small" color={COLORS.textSec} />
-                ) : (
-                  <>
-                    <Ionicons name="refresh-outline" size={14} color={COLORS.textSec} />
-                    {lastUpdated && <Text style={S.refreshTime}>{formatTime(lastUpdated)}</Text>}
-                  </>
-                )}
-              </TouchableOpacity>
+              {lastUpdated && (
+                <Text style={S.updatedText}>Updated {fmtTime(lastUpdated)}</Text>
+              )}
             </View>
 
-            {error ? (
-              <View style={S.stateCard}>
-                <View style={[S.stateIconBox, { backgroundColor: COLORS.urgent + '15' }]}>
-                  <Ionicons name="warning-outline" size={22} color={COLORS.urgent} />
+            {fetchError ? (
+              <View style={[S.stateCard, cardShadow]}>
+                <View style={[S.stateIcon, { backgroundColor: C.red + '15' }]}>
+                  <Ionicons name="warning-outline" size={22} color={C.red} />
                 </View>
-                <Text style={[S.stateTitle, { color: COLORS.urgent }]}>Connection Error</Text>
-                <Text style={S.stateBody}>{error}</Text>
-                <TouchableOpacity onPress={fetchDepartures} style={[S.retryBtn, { backgroundColor: lineColor }]} activeOpacity={0.8}>
+                <Text style={[S.stateTitle, { color: C.red }]}>Connection Error</Text>
+                <Text style={S.stateBody}>{fetchError}</Text>
+                <TouchableOpacity onPress={fetchDepartures} style={[S.retryBtn, { backgroundColor: lineColor }]}>
                   <Text style={S.retryText}>Retry</Text>
                 </TouchableOpacity>
               </View>
             ) : loading && departures.length === 0 ? (
-              <View style={S.stateCard}>
+              <View style={[S.stateCard, cardShadow]}>
                 <ActivityIndicator size="large" color={lineColor} />
                 <Text style={S.stateBody}>Fetching departures…</Text>
               </View>
             ) : nextTrain ? (
-              <NextTrainCard departure={nextTrain} now={now} lineColor={lineColor} />
+              <NextTrainCard dep={nextTrain} now={now} lineColor={lineColor} />
             ) : (
-              <View style={S.stateCard}>
-                <View style={[S.stateIconBox, { backgroundColor: COLORS.surfaceAlt }]}>
-                  <Ionicons name="moon-outline" size={22} color={COLORS.textSec} />
+              <View style={[S.stateCard, cardShadow]}>
+                <View style={[S.stateIcon, { backgroundColor: C.bg }]}>
+                  <Ionicons name="moon-outline" size={22} color={C.textTert} />
                 </View>
                 <Text style={S.stateTitle}>No Departures</Text>
-                <Text style={S.stateBody}>No upcoming trains found for {selectedLine}</Text>
+                <Text style={S.stateBody}>No upcoming trains for {selectedLine}</Text>
               </View>
             )}
 
             {upcoming.length > 0 && (
               <>
                 <Text style={[S.sectionLabel, { marginTop: 20, marginBottom: 10 }]}>COMING UP</Text>
-                <View style={S.card}>
+                <View style={[S.listCard, cardShadow]}>
                   {upcoming.map((dep, i) => (
-                    <UpcomingRow key={dep.time + dep.destination} departure={dep} now={now} lineColor={lineColor} isLast={i === upcoming.length - 1} />
+                    <UpcomingRow
+                      key={dep.time + dep.destination}
+                      dep={dep}
+                      now={now}
+                      lineColor={lineColor}
+                      isLast={i === upcoming.length - 1}
+                    />
                   ))}
                 </View>
               </>
@@ -414,11 +431,32 @@ export default function CommuteScreen() {
           </>
         )}
 
+        {/* Activity */}
         <Text style={[S.sectionLabel, { marginTop: 24, marginBottom: 10 }]}>TODAY'S ACTIVITY</Text>
-        <View style={S.card}>
-          <StatRow icon="footsteps-outline" label="Steps Today" value={status === 'connected' && steps !== null ? steps.toLocaleString() : '— device offline'} color="#60A5FA" />
-          <View style={{ height: 1, backgroundColor: COLORS.borderSoft, marginHorizontal: 18 }} />
-          <StatRow icon="location-outline" label="Distance" value={status === 'connected' && distance !== null ? `${distance.toFixed(2)} km` : '—'} color="#A78BFA" />
+        <View style={[S.listCard, cardShadow]}>
+          <View style={S.actRow}>
+            <View style={[S.actIcon, { backgroundColor: C.blue + '15' }]}>
+              <Ionicons name="footsteps-outline" size={18} color={C.blue} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={S.actLabel}>Steps Today</Text>
+              <Text style={S.actValue}>
+                {status === 'connected' && steps != null ? steps.toLocaleString() : '—'}
+              </Text>
+            </View>
+          </View>
+          <View style={S.separator} />
+          <View style={S.actRow}>
+            <View style={[S.actIcon, { backgroundColor: C.indigo + '15' }]}>
+              <Ionicons name="location-outline" size={18} color={C.indigo} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={S.actLabel}>Distance</Text>
+              <Text style={S.actValue}>
+                {status === 'connected' && distance != null ? `${distance.toFixed(2)} km` : '—'}
+              </Text>
+            </View>
+          </View>
         </View>
 
         <View style={{ height: 120 }} />
@@ -428,28 +466,53 @@ export default function CommuteScreen() {
 }
 
 const S = StyleSheet.create({
-  root:                { flex: 1 },
-  scroll:              { paddingHorizontal: 18, paddingBottom: 18 },
-  header:              { alignItems: 'center', marginBottom: 24 },
-  title:               { fontSize: 30, fontWeight: '800', color: COLORS.textPrimary, letterSpacing: -1, fontFamily: '429Font' },
-  subtitle:            { fontSize: 13, color: COLORS.textSec, marginTop: 2, fontWeight: '500' },
-  clockCard:           { alignItems: 'center', backgroundColor: COLORS.surface, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border, paddingVertical: 28, marginBottom: 14 },
-  clockTime:           { fontSize: 54, fontWeight: '800', color: COLORS.textPrimary, letterSpacing: -2 },
-  clockDate:           { fontSize: 14, color: COLORS.textSec, marginTop: 4, fontWeight: '400' },
-  lineSelector:        { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.surface, borderRadius: 16, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden', marginBottom: 22, paddingRight: 16 },
-  lineSelectorBar:     { width: 4, alignSelf: 'stretch' },
+  root:   { flex: 1, backgroundColor: C.bg },
+  scroll: { paddingHorizontal: 16, paddingTop: 8 },
+
+  header:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, paddingHorizontal: 4 },
+  title:       { fontSize: 24, fontWeight: '700', color: C.text, letterSpacing: -0.3 },
+  subtitle:    { fontSize: 13, color: C.textTert, marginTop: 2 },
+  refreshBtn:  { width: 36, height: 36, borderRadius: 18, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center', ...cardShadow },
+
+  clockCard: {
+    backgroundColor: C.card,
+    borderRadius: 20,
+    paddingVertical: 24,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  clockTime: { fontSize: 52, fontWeight: '700', color: C.text, letterSpacing: -2 },
+  clockDate: { fontSize: 13, color: C.textTert, marginTop: 4 },
+
+  lineSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: C.card,
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginBottom: 20,
+    paddingRight: 16,
+  },
+  lineSelectorBar:     { width: 5, alignSelf: 'stretch' },
   lineSelectorContent: { flex: 1, paddingVertical: 14, paddingHorizontal: 14 },
-  lineSelectorLabel:   { fontSize: 10, fontWeight: '700', color: COLORS.textTert, letterSpacing: 1, marginBottom: 3 },
-  lineSelectorValue:   { fontSize: 16, fontWeight: '700', color: COLORS.textSec },
-  sectionRow:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  sectionLabel:        { fontSize: 11, fontWeight: '700', color: COLORS.textTert, letterSpacing: 1 },
-  refreshBtn:          { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  refreshTime:         { fontSize: 11, color: COLORS.textSec },
-  card:                { backgroundColor: COLORS.surface, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden', marginBottom: 4 },
-  stateCard:           { backgroundColor: COLORS.surface, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', paddingVertical: 36, paddingHorizontal: 24, marginBottom: 12, gap: 10 },
-  stateIconBox:        { width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
-  stateTitle:          { fontSize: 15, fontWeight: '700', color: COLORS.textPrimary },
-  stateBody:           { fontSize: 13, color: COLORS.textSec, textAlign: 'center', lineHeight: 18 },
-  retryBtn:            { paddingHorizontal: 28, paddingVertical: 11, borderRadius: 22, marginTop: 4 },
-  retryText:           { color: '#fff', fontWeight: '700', fontSize: 14 },
+  lineSelectorLabel:   { fontSize: 10, fontWeight: '700', color: C.textTert, letterSpacing: 1, marginBottom: 3 },
+  lineSelectorValue:   { fontSize: 16, fontWeight: '700' },
+
+  sectionRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  sectionLabel: { fontSize: 11, fontWeight: '700', color: C.textTert, letterSpacing: 1 },
+  updatedText:  { fontSize: 11, color: C.textTert },
+
+  stateCard:  { backgroundColor: C.card, borderRadius: 20, alignItems: 'center', paddingVertical: 36, paddingHorizontal: 24, marginBottom: 12, gap: 10 },
+  stateIcon:  { width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
+  stateTitle: { fontSize: 15, fontWeight: '700', color: C.text },
+  stateBody:  { fontSize: 13, color: C.textTert, textAlign: 'center', lineHeight: 18 },
+  retryBtn:   { paddingHorizontal: 28, paddingVertical: 10, borderRadius: 22, marginTop: 4 },
+  retryText:  { color: '#fff', fontWeight: '700', fontSize: 14 },
+
+  listCard:  { backgroundColor: C.card, borderRadius: 20, overflow: 'hidden', marginBottom: 4 },
+  separator: { height: StyleSheet.hairlineWidth, backgroundColor: C.sep, marginHorizontal: 16 },
+  actRow:    { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 14 },
+  actIcon:   { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  actLabel:  { fontSize: 12, color: C.textTert, marginBottom: 2 },
+  actValue:  { fontSize: 18, fontWeight: '700', color: C.text },
 });

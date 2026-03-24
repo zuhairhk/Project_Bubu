@@ -7,12 +7,12 @@ import {
   ActivityIndicator,
   Linking,
   Alert,
+  View,
+  Text,
+  StatusBar,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-
-import { View, Text, SubText, Card, useThemeColors } from '@/components/Themed';
 import { useMood } from '@/lib/MoodContext';
 import { useBle } from '@/lib/BleContext';
 import { useSpotifyAuth } from '@/lib/spotifyAuth';
@@ -24,136 +24,147 @@ import {
   SpotifyTrack,
 } from '@/lib/spotifyApi';
 
-// ─── Config ───────────────────────────────────────────────────────────────────
-
-const BACKEND_URL     = 'https://ac00-173-35-246-197.ngrok-free.app';
-const PREDICT_URL     = `${BACKEND_URL}/api/ml/predict`;
-const AUTO_PREDICT_MS = 60_000;
-
-const MOOD_EMOJIS: Record<string, string> = {
-  happy: '😊', neutral: '😐', stressed: '😤', angry: '😠', sad: '😢', sleepy: '😴',
+// ─── Design tokens ────────────────────────────────────────────────────────────
+const C = {
+  bg:       '#F2F2F7',
+  card:     '#FFFFFF',
+  text:     '#000000',
+  textSec:  '#3C3C43',
+  textTert: '#8E8E93',
+  sep:      '#C6C6C8',
+  blue:     '#007AFF',
+  green:    '#34C759',
+  orange:   '#FF9500',
+  red:      '#FF3B30',
+  spotify:  '#1DB954',
 };
 
-const MOOD_COLORS: Record<string, readonly [string, string, string]> = {
-  happy:   ['#FFF7C2', '#FFE680', '#FFD23F'],
-  neutral: ['#F1F5F9', '#E2E8F0', '#CBD5E1'],
-  stressed:['#FFD6D6', '#FFB3B3', '#FF8A8A'],
-  angry:   ['#FFB3B3', '#FF7A7A', '#E63946'],
-  sad:     ['#D6E4FF', '#BBD0FF', '#9AA9FF'],
-  sleepy:  ['#E6DFFF', '#CFC4FF', '#B8A9FF'],
+const cardShadow = {
+  shadowColor:   '#000',
+  shadowOpacity: 0.06,
+  shadowRadius:  12,
+  shadowOffset:  { width: 0, height: 2 },
+  elevation:     3,
 };
+
+const MOOD_COLOR: Record<string, string> = {
+  happy: '#FF9500', neutral: '#007AFF', stressed: '#FF3B30',
+  angry: '#FF3B30', sad: '#5856D6',    sleepy: '#AF52DE',
+};
+const MOOD_LABEL: Record<string, string> = {
+  happy: 'Happy', neutral: 'Neutral', stressed: 'Stressed',
+  angry: 'Angry', sad: 'Sad',        sleepy: 'Sleepy',
+};
+
+const BACKEND_URL  = 'https://ac00-173-35-246-197.ngrok-free.app';
+const PREDICT_URL  = `${BACKEND_URL}/api/ml/predict`;
+const PREDICT_MS   = 60_000;
 
 const MOOD_LABELS = ['happy', 'neutral', 'stressed', 'angry', 'sad', 'sleepy'] as const;
 type Mood = typeof MOOD_LABELS[number];
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 type Artist = { id: string; name: string; genres: string[]; images: { url: string }[] };
 type Track  = { id: string; uri: string; name: string; artists: { name: string }[]; album: { name: string; images: { url: string }[] }; external_urls: { spotify: string } };
 
-// ─── Row components ───────────────────────────────────────────────────────────
-
+// ─── Artist row ───────────────────────────────────────────────────────────────
 function ArtistRow({ artist, index }: { artist: Artist; index: number }) {
-  const colors = useThemeColors();
   return (
-    <View style={[styles.listRow, { borderBottomColor: colors.separator }]}>
-      <Text style={styles.rankText}>#{index + 1}</Text>
-      {artist.images[0]?.url ? (
-        <Image source={{ uri: artist.images[0].url }} style={styles.thumb} />
-      ) : (
-        <View style={[styles.thumb, styles.thumbPlaceholder]}>
-          <Ionicons name="person" size={22} color="#94A3B8" />
-        </View>
-      )}
-      <View style={styles.listMeta}>
-        <Text style={styles.listPrimary}>{artist.name}</Text>
-        <SubText numberOfLines={1}>{(artist.genres ?? []).slice(0, 2).join(', ') || 'Artist'}</SubText>
+    <View style={[R.row, index !== 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.sep }]}>
+      <Text style={R.rank}>#{index + 1}</Text>
+      {artist.images[0]?.url
+        ? <Image source={{ uri: artist.images[0].url }} style={R.thumb} />
+        : <View style={[R.thumb, R.thumbFallback]}><Ionicons name="person" size={20} color={C.textTert} /></View>
+      }
+      <View style={R.meta}>
+        <Text style={R.primary}>{artist.name}</Text>
+        <Text style={R.secondary} numberOfLines={1}>
+          {(artist.genres ?? []).slice(0, 2).join(', ') || 'Artist'}
+        </Text>
       </View>
     </View>
   );
 }
 
-function TrackRow({
-  track,
-  index,
-  onPress,
-}: {
-  track: Track;
-  index: number;
-  onPress?: () => void;
-}) {
-  const colors = useThemeColors();
+// ─── Track row ────────────────────────────────────────────────────────────────
+function TrackRow({ track, index, onPress }: { track: Track; index: number; onPress?: () => void }) {
   return (
     <Pressable
       onPress={onPress}
       style={({ pressed }) => [
-        styles.listRow,
-        { borderBottomColor: colors.separator },
-        pressed && { backgroundColor: colors.card },
+        R.row,
+        index !== 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.sep },
+        pressed && { backgroundColor: C.bg },
       ]}
     >
-      <Text style={styles.rankText}>#{index + 1}</Text>
-      {track.album.images[0]?.url ? (
-        <Image source={{ uri: track.album.images[0].url }} style={styles.thumb} />
-      ) : (
-        <View style={[styles.thumb, styles.thumbPlaceholder]}>
-          <Ionicons name="musical-note" size={22} color="#94A3B8" />
-        </View>
-      )}
-      <View style={styles.listMeta}>
-        <Text style={styles.listPrimary} numberOfLines={1}>{track.name}</Text>
-        <SubText numberOfLines={1}>{track.artists[0]?.name}</SubText>
+      <Text style={R.rank}>#{index + 1}</Text>
+      {track.album.images[0]?.url
+        ? <Image source={{ uri: track.album.images[0].url }} style={R.thumb} />
+        : <View style={[R.thumb, R.thumbFallback]}><Ionicons name="musical-note" size={20} color={C.textTert} /></View>
+      }
+      <View style={R.meta}>
+        <Text style={R.primary} numberOfLines={1}>{track.name}</Text>
+        <Text style={R.secondary} numberOfLines={1}>{track.artists[0]?.name}</Text>
       </View>
-      <Ionicons name="play-circle-outline" size={22} color="#1DB954" style={{ marginLeft: 8 }} />
+      <Ionicons name="play-circle-outline" size={24} color={C.spotify} />
     </Pressable>
   );
 }
 
+const R = StyleSheet.create({
+  row:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
+  rank:        { width: 28, fontSize: 12, color: C.textTert, fontWeight: '600' },
+  thumb:       { width: 46, height: 46, borderRadius: 8, marginRight: 12 },
+  thumbFallback:{ alignItems: 'center', justifyContent: 'center', backgroundColor: C.bg },
+  meta:        { flex: 1 },
+  primary:     { fontSize: 14, fontWeight: '600', color: C.text, marginBottom: 2 },
+  secondary:   { fontSize: 12, color: C.textTert },
+});
+
+// ─── Mood chip ────────────────────────────────────────────────────────────────
 function MoodChip({ mood, active, onPress }: { mood: Mood; active: boolean; onPress: () => void }) {
-  const bg = MOOD_COLORS[mood];
+  const col = MOOD_COLOR[mood] ?? C.blue;
   return (
     <Pressable
       onPress={onPress}
-      style={[
-        styles.moodChip,
-        active && { borderColor: bg[2], borderWidth: 2, backgroundColor: bg[0] },
-      ]}
+      style={[MC.chip, active && { backgroundColor: col + '15', borderColor: col, borderWidth: 1.5 }]}
     >
-      <Text style={[styles.moodChipText, active && { fontWeight: '700', color: '#334155' }]}>
-        {MOOD_EMOJIS[mood]} {mood}
+      <Text style={[MC.text, active && { color: col, fontWeight: '700' }]}>
+        {MOOD_LABEL[mood]}
       </Text>
     </Pressable>
   );
 }
 
-// ─── Main screen ──────────────────────────────────────────────────────────────
+const MC = StyleSheet.create({
+  chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: C.bg, borderWidth: 1, borderColor: C.sep },
+  text: { fontSize: 13, color: C.textSec, fontWeight: '500' },
+});
 
+// ─── Main screen ──────────────────────────────────────────────────────────────
 export default function PlaylistScreen() {
   const insets = useSafeAreaInsets();
-  const colors = useThemeColors();
   const { setMood: setGlobalMood } = useMood();
   const { data: bleData, status: bleStatus } = useBle();
 
   const [request, response, promptAsync, getToken] = useSpotifyAuth();
-  const [token, setToken]         = useState<string | null>(null);
-  const [artists, setArtists]     = useState<Artist[]>([]);
+  const [token,     setToken]     = useState<string | null>(null);
+  const [artists,   setArtists]   = useState<Artist[]>([]);
   const [topTracks, setTopTracks] = useState<Track[]>([]);
-  const [loading, setLoading]     = useState(false);
+  const [loading,   setLoading]   = useState(false);
 
-  const [activeMood, setActiveMood]         = useState<Mood | null>(null);
-  const [moodSource, setMoodSource]         = useState<'auto' | 'manual' | null>(null);
-  const [predictionConf, setPredictionConf] = useState<number>(0);
-  const [predicting, setPredicting]         = useState(false);
+  const [activeMood,     setActiveMood]     = useState<Mood | null>(null);
+  const [moodSource,     setMoodSource]     = useState<'auto' | 'manual' | null>(null);
+  const [predictionConf, setPredictionConf] = useState(0);
+  const [predicting,     setPredicting]     = useState(false);
 
-  const [tab, setTab]                             = useState<'charts' | 'vibes'>('charts');
-  const [recommendedTracks, setRecommendedTracks] = useState<Track[]>([]);
-  const [recLoading, setRecLoading]               = useState(false);
-  const [queuingTracks, setQueuingTracks]         = useState(false);
+  const [tab,               setTab]               = useState<'charts' | 'vibes'>('charts');
+  const [recTracks,         setRecTracks]         = useState<Track[]>([]);
+  const [recLoading,        setRecLoading]        = useState(false);
+  const [queuingTracks,     setQueuingTracks]     = useState(false);
 
-  const predictTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Spotify login ──────────────────────────────────────────────────────────
-
+  // ── Spotify auth ──────────────────────────────────────────────────────────
   useEffect(() => {
     async function handleAuth() {
       if (response?.type !== 'success') return;
@@ -169,244 +180,180 @@ export default function PlaylistScreen() {
           setArtists(ar.items ?? []);
           setTopTracks(tr.items ?? []);
         }
-      } catch (e) {
-        console.error('Spotify auth error:', e);
-      } finally {
-        setLoading(false);
-      }
+      } catch (e) { console.error('Spotify auth error:', e); }
+      finally { setLoading(false); }
     }
     handleAuth();
   }, [response]);
 
-  // ── Recommendations ────────────────────────────────────────────────────────
-
-  const loadRecommendations = useCallback(async (tk: string, mood: Mood) => {
+  // ── Recommendations ───────────────────────────────────────────────────────
+  const loadRecs = useCallback(async (tk: string, mood: Mood) => {
     setRecLoading(true);
     try {
-      const result = await getMoodRecommendations(tk, mood, 20);
-      setRecommendedTracks(result.tracks as Track[]);
-    } catch (e) {
-      console.error('Recommendations error:', e);
-    } finally {
-      setRecLoading(false);
-    }
+      const r = await getMoodRecommendations(tk, mood, 20);
+      setRecTracks(r.tracks as Track[]);
+    } catch (e) { console.error('Recs error:', e); }
+    finally { setRecLoading(false); }
   }, []);
 
-  // ── Auto mood prediction ───────────────────────────────────────────────────
-
+  // ── Mood prediction ───────────────────────────────────────────────────────
   const predictMood = useCallback(async () => {
     if (bleStatus !== 'connected' || !bleData.heartRate) return;
     setPredicting(true);
     try {
       const res = await fetch(PREDICT_URL, {
-        method:  'POST',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id:           'dev_user',
-          heart_rate:        bleData.heartRate ?? 70,
+          user_id: 'dev_user',
+          heart_rate: bleData.heartRate ?? 70,
           steps_last_minute: bleData.steps ?? 0,
           location_variance: 0.00003,
-          timestamp:         new Date().toISOString(),
+          timestamp: new Date().toISOString(),
         }),
       });
-      if (!res.ok) throw new Error(`Predict failed: ${res.status}`);
+      if (!res.ok) throw new Error(`${res.status}`);
       const data = await res.json();
       const mood = data.mood as Mood;
       setPredictionConf(data.confidence ?? 0);
-
       if (moodSource !== 'manual') {
         setActiveMood(mood);
         setGlobalMood(mood);
         setMoodSource('auto');
-        if (token) loadRecommendations(token, mood);
+        if (token) loadRecs(token, mood);
       }
-    } catch (e) {
-      console.error('Mood prediction error:', e);
-    } finally {
-      setPredicting(false);
-    }
-  }, [bleStatus, bleData, moodSource, token, setGlobalMood, loadRecommendations]);
+    } catch (e) { console.error('Predict error:', e); }
+    finally { setPredicting(false); }
+  }, [bleStatus, bleData, moodSource, token, setGlobalMood, loadRecs]);
 
   useEffect(() => {
     predictMood();
-    predictTimerRef.current = setInterval(predictMood, AUTO_PREDICT_MS);
-    return () => { if (predictTimerRef.current) clearInterval(predictTimerRef.current); };
+    timerRef.current = setInterval(predictMood, PREDICT_MS);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [predictMood]);
 
   useEffect(() => {
-    if (token && activeMood) loadRecommendations(token, activeMood);
+    if (token && activeMood) loadRecs(token, activeMood);
   }, [token]);
-
-  // ── Manual mood override ───────────────────────────────────────────────────
 
   const handleManualMood = useCallback((mood: Mood) => {
     setActiveMood(mood);
     setGlobalMood(mood);
     setMoodSource('manual');
-    if (token) loadRecommendations(token, mood);
-  }, [token, setGlobalMood, loadRecommendations]);
-
-  // ── Open single track in Spotify ──────────────────────────────────────────
+    if (token) loadRecs(token, mood);
+  }, [token, setGlobalMood, loadRecs]);
 
   const handleTrackPress = useCallback((track: Track) => {
-    // Try Spotify app deep link first, fall back to web
-    Linking.openURL(track.uri).catch(() => {
-      Linking.openURL(track.external_urls.spotify);
-    });
+    Linking.openURL(track.uri).catch(() => Linking.openURL(track.external_urls.spotify));
   }, []);
 
-  // ── Queue all tracks ──────────────────────────────────────────────────────
-
   const handleQueueAll = useCallback(async () => {
-    if (!token || recommendedTracks.length === 0) return;
-
-    // First open Spotify with the first track so something starts playing
-    const firstTrack = recommendedTracks[0];
-    Linking.openURL(firstTrack.uri).catch(() => {
-      Linking.openURL(firstTrack.external_urls.spotify);
-    });
-
-    // Then queue the rest in the background
-    if (recommendedTracks.length > 1) {
+    if (!token || recTracks.length === 0) return;
+    const first = recTracks[0];
+    Linking.openURL(first.uri).catch(() => Linking.openURL(first.external_urls.spotify));
+    if (recTracks.length > 1) {
       setQueuingTracks(true);
       try {
-        const rest = recommendedTracks.slice(1);
-        const result = await queueAllTracks(token, rest as SpotifyTrack[]);
-        console.log(`Queued ${result.queued} tracks, ${result.failed} failed`);
+        const result = await queueAllTracks(token, recTracks.slice(1) as SpotifyTrack[]);
         if (result.queued > 0) {
-          Alert.alert(
-            '🎵 Added to Queue',
-            `Opened first track and queued ${result.queued} more in Spotify.`,
-            [{ text: 'OK' }],
-          );
+          Alert.alert('Added to Queue', `Queued ${result.queued} more tracks in Spotify.`, [{ text: 'OK' }]);
         }
-      } catch (e) {
-        console.error('Queue error:', e);
-      } finally {
-        setQueuingTracks(false);
-      }
+      } catch (e) { console.error('Queue error:', e); }
+      finally { setQueuingTracks(false); }
     }
-  }, [token, recommendedTracks]);
+  }, [token, recTracks]);
 
-  // ── Logout ─────────────────────────────────────────────────────────────────
-
-  const handleLogout = () => {
-    setToken(null);
-    setArtists([]);
-    setTopTracks([]);
-    setRecommendedTracks([]);
-  };
-
-  // ── Render ─────────────────────────────────────────────────────────────────
-
-  const moodBg: readonly [string, string, string] = activeMood
-    ? MOOD_COLORS[activeMood]
-    : ['#F1F5F9', '#E2E8F0', '#CBD5E1'];
+  const moodColor = activeMood ? (MOOD_COLOR[activeMood] ?? C.blue) : C.textTert;
+  const moodLabel = activeMood ? (MOOD_LABEL[activeMood] ?? activeMood) : 'Not detected';
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top + 12 }]}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+    <View style={[S.root, { paddingTop: insets.top }]}>
+      <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={S.scroll}>
 
-        <View style={styles.header}>
-          <Text style={styles.title}>Playlist</Text>
-          <SubText>Mood-powered music</SubText>
+        {/* Header */}
+        <View style={S.header}>
+          <View>
+            <Text style={S.title}>Playlist</Text>
+            <Text style={S.subtitle}>Mood-powered music</Text>
+          </View>
+          {token && (
+            <Pressable onPress={() => { setToken(null); setArtists([]); setTopTracks([]); setRecTracks([]); }} style={S.reloginBtn}>
+              <Ionicons name="refresh-outline" size={14} color={C.blue} />
+              <Text style={S.reloginText}>Re-login</Text>
+            </Pressable>
+          )}
         </View>
 
-        {/* Mood card */}
-        <Card style={styles.moodCard}>
-          <LinearGradient colors={[moodBg[0], moodBg[1]]} style={StyleSheet.absoluteFill} start={[0,0]} end={[1,1]} />
-
-          <View style={styles.moodCardTop}>
-            <Text style={styles.moodCardLabel}>
-              {moodSource === 'manual' ? 'YOUR MOOD' : 'DETECTED MOOD'}
+        {/* ── Mood card ── */}
+        <View style={[S.moodCard, cardShadow]}>
+          <View style={S.moodCardLeft}>
+            <Text style={S.moodCardMeta}>
+              {moodSource === 'manual' ? 'MANUALLY SET' : bleStatus === 'connected' ? 'DETECTED MOOD' : 'NO DEVICE'}
             </Text>
-            <View style={[styles.blePill, bleStatus !== 'connected' && { backgroundColor: '#F1F5F9' }]}>
-              {bleStatus === 'connected' && <View style={styles.bleDot} />}
-              <Text style={[styles.blePillText, bleStatus !== 'connected' && { color: '#94A3B8' }]}>
-                {bleStatus === 'connected' ? 'Live BLE' : 'No device'}
-              </Text>
-            </View>
-          </View>
-
-          {predicting && (
-            <View style={styles.detectingRow}>
-              <ActivityIndicator size="small" color="#64748B" />
-              <SubText style={{ marginLeft: 6 }}>Analysing biometrics…</SubText>
-            </View>
-          )}
-
-          {activeMood ? (
-            <View style={styles.moodDisplay}>
-              <Text style={styles.moodBigEmoji}>{MOOD_EMOJIS[activeMood]}</Text>
-              <View>
-                <Text style={styles.moodBigLabel}>
-                  {activeMood.charAt(0).toUpperCase() + activeMood.slice(1)}
-                </Text>
-                <SubText style={{ color: '#64748B' }}>
-                  {moodSource === 'auto'
-                    ? `${Math.round(predictionConf * 100)}% confidence`
-                    : 'Manually set'}
-                </SubText>
+            <Text style={[S.moodCardValue, { color: moodColor }]}>{moodLabel}</Text>
+            <Text style={S.moodCardSub}>
+              {moodSource === 'auto'
+                ? `${Math.round(predictionConf * 100)}% confidence`
+                : moodSource === 'manual'
+                ? 'Override active'
+                : bleStatus === 'connected' ? 'Waiting for reading...' : 'Connect device or override below'}
+            </Text>
+            {predicting && (
+              <View style={S.predictingRow}>
+                <ActivityIndicator size="small" color={C.blue} />
+                <Text style={S.predictingText}>Analysing...</Text>
               </View>
-            </View>
-          ) : (
-            <SubText style={{ marginVertical: 12 }}>
-              {bleStatus === 'connected'
-                ? 'Waiting for first BLE reading…'
-                : 'Connect your device or pick a mood below'}
-            </SubText>
-          )}
-
-          <Text style={[styles.moodCardLabel, { marginTop: 14, marginBottom: 8 }]}>OVERRIDE MOOD</Text>
-          <View style={styles.moodChipsRow}>
-            {MOOD_LABELS.map(m => (
-              <MoodChip
-                key={m}
-                mood={m}
-                active={activeMood === m && moodSource === 'manual'}
-                onPress={() => handleManualMood(m)}
-              />
-            ))}
+            )}
           </View>
-        </Card>
+          <View style={[S.moodColorDot, { backgroundColor: moodColor + '20' }]}>
+            <View style={[S.moodColorDotInner, { backgroundColor: moodColor }]} />
+          </View>
+        </View>
 
-        {/* Spotify section */}
+        {/* Mood override chips */}
+        <Text style={S.sectionLabel}>OVERRIDE MOOD</Text>
+        <View style={S.chipsRow}>
+          {MOOD_LABELS.map(m => (
+            <MoodChip
+              key={m}
+              mood={m}
+              active={activeMood === m && moodSource === 'manual'}
+              onPress={() => handleManualMood(m)}
+            />
+          ))}
+        </View>
+
+        {/* ── Spotify section ── */}
         {!token ? (
-          <Card style={styles.connectCard}>
-            <LinearGradient colors={['#1DB95422', '#1DB95408']} style={StyleSheet.absoluteFill} start={[0,0]} end={[1,1]} />
-            <Ionicons name="musical-notes" size={48} color="#1DB954" style={{ marginBottom: 16 }} />
-            <Text style={styles.connectTitle}>Connect Spotify</Text>
-            <SubText style={{ textAlign: 'center', marginBottom: 20 }}>
-              Login to get personalised mood-based music recommendations
-            </SubText>
+          <View style={[S.connectCard, cardShadow]}>
+            <View style={[S.spotifyIconBox, { backgroundColor: C.spotify + '15' }]}>
+              <Ionicons name="musical-notes" size={32} color={C.spotify} />
+            </View>
+            <Text style={S.connectTitle}>Connect Spotify</Text>
+            <Text style={S.connectSub}>Login to get mood-based recommendations from your taste</Text>
             <Pressable
               disabled={!request}
               onPress={() => promptAsync?.()}
-              style={({ pressed }) => [styles.connectBtn, pressed && { opacity: 0.8 }]}
+              style={({ pressed }) => [S.connectBtn, pressed && { opacity: 0.8 }]}
             >
-              <Text style={styles.connectBtnText}>Login with Spotify</Text>
+              <Text style={S.connectBtnText}>Login with Spotify</Text>
             </Pressable>
-          </Card>
+          </View>
         ) : loading ? (
-          <ActivityIndicator size="large" color="#1DB954" style={{ marginTop: 40 }} />
+          <ActivityIndicator color={C.spotify} style={{ marginTop: 40 }} />
         ) : (
           <>
-            {/* Re-login */}
-            <Pressable onPress={handleLogout} style={styles.reloginBtn}>
-              <Ionicons name="refresh-outline" size={13} color="#94A3B8" />
-              <SubText style={{ fontSize: 11, marginLeft: 4 }}>Re-login to Spotify</SubText>
-            </Pressable>
-
             {/* Tabs */}
-            <View style={[styles.tabBar, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
+            <View style={S.tabBar}>
               {(['charts', 'vibes'] as const).map(t => (
                 <Pressable
                   key={t}
                   onPress={() => setTab(t)}
-                  style={[styles.tabBtn, tab === t && styles.tabBtnActive]}
+                  style={[S.tabBtn, tab === t && { backgroundColor: C.card, ...cardShadow }]}
                 >
-                  <Text style={[styles.tabLabel, tab === t && styles.tabLabelActive]}>
-                    {t === 'charts' ? 'Top Charts' : `${activeMood ? MOOD_EMOJIS[activeMood] + ' ' : ''}Vibes`}
+                  <Text style={[S.tabText, tab === t && { color: C.text, fontWeight: '600' }]}>
+                    {t === 'charts' ? 'Top Charts' : `${activeMood ? MOOD_LABEL[activeMood] + ' ' : ''}Vibes`}
                   </Text>
                 </Pressable>
               ))}
@@ -414,86 +361,68 @@ export default function PlaylistScreen() {
 
             {tab === 'charts' ? (
               <>
-                <Text style={styles.sectionLabel}>TOP ARTISTS</Text>
-                <Card style={styles.listCard}>
+                <Text style={S.sectionLabel}>TOP ARTISTS</Text>
+                <View style={[S.listCard, cardShadow]}>
                   {artists.length === 0
-                    ? <SubText style={{ padding: 16, textAlign: 'center' }}>No data yet</SubText>
+                    ? <Text style={S.emptyText}>No data yet</Text>
                     : artists.map((a, i) => <ArtistRow key={a.id} artist={a} index={i} />)}
-                </Card>
-                <Text style={[styles.sectionLabel, { marginTop: 16 }]}>TOP TRACKS</Text>
-                <Card style={styles.listCard}>
+                </View>
+
+                <Text style={[S.sectionLabel, { marginTop: 20 }]}>TOP TRACKS</Text>
+                <View style={[S.listCard, cardShadow]}>
                   {topTracks.length === 0
-                    ? <SubText style={{ padding: 16, textAlign: 'center' }}>No data yet</SubText>
+                    ? <Text style={S.emptyText}>No data yet</Text>
                     : topTracks.map((t, i) => (
-                        <TrackRow
-                          key={t.id}
-                          track={t}
-                          index={i}
-                          onPress={() => handleTrackPress(t)}
-                        />
+                        <TrackRow key={t.id} track={t} index={i} onPress={() => handleTrackPress(t)} />
                       ))}
-                </Card>
+                </View>
               </>
             ) : (
               <>
-                {/* Vibes header with Play All button */}
-                <View style={styles.vibesHeader}>
+                <View style={S.vibesHeader}>
                   <View>
-                    <Text style={styles.sectionLabel}>
+                    <Text style={S.sectionLabel}>
                       {activeMood ? `FOR YOUR ${activeMood.toUpperCase()} MOOD` : 'RECOMMENDED'}
                     </Text>
                     {artists.length > 0 && activeMood && (
-                      <SubText style={{ fontSize: 11 }}>
+                      <Text style={S.vibesBase}>
                         Based on {artists.slice(0, 2).map(a => a.name).join(', ')}
-                      </SubText>
+                      </Text>
                     )}
                   </View>
-                  {recommendedTracks.length > 0 && (
+                  {recTracks.length > 0 && (
                     <Pressable
                       onPress={handleQueueAll}
                       disabled={queuingTracks}
-                      style={({ pressed }) => [
-                        styles.playAllBtn,
-                        (pressed || queuingTracks) && { opacity: 0.7 },
-                      ]}
+                      style={({ pressed }) => [S.playAllBtn, (pressed || queuingTracks) && { opacity: 0.7 }]}
                     >
                       {queuingTracks
                         ? <ActivityIndicator size="small" color="#fff" />
-                        : <Ionicons name="play" size={14} color="#fff" />
+                        : <Ionicons name="play" size={13} color="#fff" />
                       }
-                      <Text style={styles.playAllText}>
-                        {queuingTracks ? 'Queuing…' : 'Play All'}
-                      </Text>
+                      <Text style={S.playAllText}>{queuingTracks ? 'Queuing...' : 'Play All'}</Text>
                     </Pressable>
                   )}
                 </View>
 
                 {recLoading ? (
-                  <ActivityIndicator size="large" color="#1DB954" style={{ marginTop: 40 }} />
-                ) : recommendedTracks.length > 0 ? (
+                  <ActivityIndicator color={C.spotify} style={{ marginTop: 40 }} />
+                ) : recTracks.length > 0 ? (
                   <>
-                    <SubText style={{ marginBottom: 8, fontSize: 11, textAlign: 'center' }}>
-                      Tap a track to open in Spotify · Tap Play All to queue everything
-                    </SubText>
-                    <Card style={styles.listCard}>
-                      {recommendedTracks.map((t, i) => (
-                        <TrackRow
-                          key={t.id}
-                          track={t}
-                          index={i}
-                          onPress={() => handleTrackPress(t)}
-                        />
+                    <Text style={S.tapHint}>Tap a track to open · Play All to queue everything</Text>
+                    <View style={[S.listCard, cardShadow]}>
+                      {recTracks.map((t, i) => (
+                        <TrackRow key={t.id} track={t} index={i} onPress={() => handleTrackPress(t)} />
                       ))}
-                    </Card>
+                    </View>
                   </>
                 ) : (
-                  <Card style={{ padding: 24, alignItems: 'center' }}>
-                    <SubText>
-                      {activeMood
-                        ? 'Loading recommendations…'
-                        : 'Select a mood to see recommendations'}
-                    </SubText>
-                  </Card>
+                  <View style={[S.emptyCard, cardShadow]}>
+                    <Ionicons name="musical-notes-outline" size={32} color={C.textTert} />
+                    <Text style={S.emptyCardText}>
+                      {activeMood ? 'Loading recommendations...' : 'Select a mood to see recommendations'}
+                    </Text>
+                  </View>
                 )}
               </>
             )}
@@ -506,51 +435,48 @@ export default function PlaylistScreen() {
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+const S = StyleSheet.create({
+  root:   { flex: 1, backgroundColor: C.bg },
+  scroll: { paddingHorizontal: 16, paddingTop: 8 },
 
-const styles = StyleSheet.create({
-  root:           { flex: 1 },
-  scroll:         { paddingHorizontal: 16 },
-  header:         { alignItems: 'center', marginBottom: 16 },
-  title:          { fontSize: 28, fontWeight: 'bold', fontFamily: '429Font', marginBottom: 2 },
+  header:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, paddingHorizontal: 4 },
+  title:       { fontSize: 24, fontWeight: '700', color: C.text, letterSpacing: -0.3 },
+  subtitle:    { fontSize: 13, color: C.textTert, marginTop: 2 },
+  reloginBtn:  { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.card, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7, ...cardShadow },
+  reloginText: { fontSize: 12, fontWeight: '600', color: C.blue },
 
-  moodCard:       { padding: 16, marginBottom: 16, overflow: 'hidden' },
-  moodCardTop:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  moodCardLabel:  { fontSize: 10, fontWeight: '700', color: '#64748B', letterSpacing: 0.8 },
-  detectingRow:   { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  moodDisplay:    { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 4 },
-  moodBigEmoji:   { fontSize: 52 },
-  moodBigLabel:   { fontSize: 22, fontWeight: '700', color: '#1E293B' },
-  moodChipsRow:   { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  moodChip:       { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0' },
-  moodChipText:   { fontSize: 13, color: '#475569' },
-  blePill:        { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#F0FDF4', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
-  bleDot:         { width: 6, height: 6, borderRadius: 3, backgroundColor: '#4ADE80' },
-  blePillText:    { fontSize: 11, fontWeight: '600', color: '#16A34A' },
+  moodCard:      { backgroundColor: C.card, borderRadius: 20, padding: 18, flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  moodCardLeft:  { flex: 1 },
+  moodCardMeta:  { fontSize: 10, fontWeight: '700', color: C.textTert, letterSpacing: 1, marginBottom: 4 },
+  moodCardValue: { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, marginBottom: 4 },
+  moodCardSub:   { fontSize: 12, color: C.textTert },
+  predictingRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
+  predictingText:{ fontSize: 12, color: C.blue },
+  moodColorDot:  { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', marginLeft: 16 },
+  moodColorDotInner: { width: 24, height: 24, borderRadius: 12 },
 
-  reloginBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 12, padding: 6 },
+  sectionLabel: { fontSize: 11, fontWeight: '700', color: C.textTert, letterSpacing: 1, marginBottom: 10 },
+  chipsRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 24 },
 
-  tabBar:         { flexDirection: 'row', borderRadius: 12, borderWidth: 1, overflow: 'hidden', marginBottom: 12 },
-  tabBtn:         { flex: 1, paddingVertical: 10, alignItems: 'center' },
-  tabBtnActive:   { backgroundColor: '#1DB954' },
-  tabLabel:       { fontWeight: '600', fontSize: 14 },
-  tabLabelActive: { color: '#fff' },
+  connectCard:    { backgroundColor: C.card, borderRadius: 20, padding: 28, alignItems: 'center', marginTop: 8 },
+  spotifyIconBox: { width: 64, height: 64, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  connectTitle:   { fontSize: 20, fontWeight: '700', color: C.text, marginBottom: 6 },
+  connectSub:     { fontSize: 13, color: C.textTert, textAlign: 'center', marginBottom: 20, lineHeight: 20 },
+  connectBtn:     { backgroundColor: C.spotify, paddingHorizontal: 32, paddingVertical: 14, borderRadius: 30 },
+  connectBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 
-  vibesHeader:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  playAllBtn:     { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#1DB954', borderRadius: 20, paddingVertical: 8, paddingHorizontal: 16 },
-  playAllText:    { color: '#fff', fontWeight: '700', fontSize: 13 },
+  tabBar:   { flexDirection: 'row', backgroundColor: C.bg, borderRadius: 12, padding: 4, marginBottom: 20, gap: 4 },
+  tabBtn:   { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 10 },
+  tabText:  { fontSize: 13, fontWeight: '500', color: C.textTert },
 
-  sectionLabel:     { fontSize: 10, fontWeight: '700', color: '#94A3B8', letterSpacing: 0.8, marginBottom: 4 },
-  listCard:         { overflow: 'hidden', marginBottom: 4 },
-  listRow:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
-  rankText:         { width: 28, fontSize: 12, color: '#94A3B8', fontWeight: '600' },
-  thumb:            { width: 46, height: 46, borderRadius: 8, marginRight: 12 },
-  thumbPlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#E2E8F0' },
-  listMeta:         { flex: 1 },
-  listPrimary:      { fontSize: 15, fontWeight: '600', marginBottom: 2 },
+  vibesHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  vibesBase:   { fontSize: 11, color: C.textTert, marginTop: 2 },
+  playAllBtn:  { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.spotify, borderRadius: 20, paddingVertical: 8, paddingHorizontal: 16 },
+  playAllText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  tapHint:     { fontSize: 11, color: C.textTert, textAlign: 'center', marginBottom: 10 },
 
-  connectCard:    { alignItems: 'center', paddingVertical: 48, paddingHorizontal: 24, marginTop: 20, overflow: 'hidden' },
-  connectTitle:   { fontSize: 22, fontWeight: '700', marginBottom: 8 },
-  connectBtn:     { backgroundColor: '#1DB954', paddingHorizontal: 32, paddingVertical: 14, borderRadius: 30 },
-  connectBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  listCard:     { backgroundColor: C.card, borderRadius: 20, overflow: 'hidden', marginBottom: 4 },
+  emptyText:    { padding: 20, textAlign: 'center', fontSize: 14, color: C.textTert },
+  emptyCard:    { backgroundColor: C.card, borderRadius: 20, padding: 36, alignItems: 'center', gap: 12 },
+  emptyCardText:{ fontSize: 14, color: C.textTert, textAlign: 'center' },
 });
