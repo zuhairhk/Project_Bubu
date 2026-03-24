@@ -67,7 +67,7 @@ function ArtistRow({ artist, index }: { artist: Artist; index: number }) {
       )}
       <View style={styles.listMeta}>
         <Text style={styles.listPrimary}>{artist.name}</Text>
-        <SubText numberOfLines={1}>{artist.genres.slice(0, 2).join(', ') || 'Artist'}</SubText>
+        <SubText numberOfLines={1}>{(artist.genres ?? []).slice(0, 2).join(', ') || 'Artist'}</SubText>
       </View>
     </View>
   );
