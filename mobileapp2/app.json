@@ -2,7 +2,7 @@
   "expo": {
     "name": "Commubu",
     "slug": "commubuapp",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "commubu-login",
@@ -63,6 +63,7 @@
       "eas": {
         "projectId": "75daa9af-080f-41f0-bbfa-2449d1003125"
       }
-    }
+    },
+    "owner": "zuhairhk"
   }
 }
