@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   StyleSheet,
   ScrollView,
@@ -6,7 +6,9 @@ import {
   Alert,
   ActivityIndicator,
   Dimensions,
+  StatusBar,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -16,243 +18,277 @@ import { useMood } from '@/lib/MoodContext';
 
 const { width } = Dimensions.get('window');
 
-const N = {
-  red:    '#E4000F',
-  blue:   '#009AC7',
-  yellow: '#FFD700',
-  green:  '#00A650',
-  white:  '#FFFFFF',
-  ink:    '#1A1A2E',
-  grey:   '#F0F0F0',
-};
-
-const MOOD_CONFIG: Record<string, {
-  color: string; bg: string; label: string; feeling: string;
+// ─── Mood palette — each mood owns a full gradient identity ──────────────────
+const MOOD_THEME: Record<string, {
+  grad:    readonly [string, string, string];
+  accent:  string;
+  label:   string;
+  sub:     string;
+  tip:     string;
 }> = {
-  happy:   { color: '#E4000F', bg: '#FFF5CC', label: 'HAPPY',    feeling: 'Feeling great today!'     },
-  neutral: { color: '#009AC7', bg: '#E8F4F8', label: 'NEUTRAL',  feeling: 'Just cruising along'      },
-  stressed:{ color: '#FF6B35', bg: '#FFF0E8', label: 'STRESSED', feeling: 'Running on fumes...'      },
-  angry:   { color: '#E4000F', bg: '#FFE8E8', label: 'ANGRY',    feeling: 'Watch out!'               },
-  sad:     { color: '#5B6CF6', bg: '#EEF0FF', label: 'SAD',      feeling: 'Need a moment...'         },
-  sleepy:  { color: '#9B59B6', bg: '#F5EEF8', label: 'SLEEPY',   feeling: 'Zzz... commuting'         },
+  happy: {
+    grad:   ['#FF6B6B', '#FF8E53', '#FFC371'],
+    accent: '#FFF0C0',
+    label:  'Happy',
+    sub:    'Feeling great today',
+    tip:    'Keep that energy going on your commute!',
+  },
+  neutral: {
+    grad:   ['#4776E6', '#5B7FFF', '#8E54E9'],
+    accent: '#C8D8FF',
+    label:  'Neutral',
+    sub:    'Just cruising along',
+    tip:    'A calm commute is a productive one.',
+  },
+  stressed: {
+    grad:   ['#F7971E', '#FF5F6D', '#FFC371'],
+    accent: '#FFE0C0',
+    label:  'Stressed',
+    sub:    'Running on fumes',
+    tip:    'Box breathe: 4s in · 4s hold · 4s out',
+  },
+  angry: {
+    grad:   ['#C0392B', '#E74C3C', '#F39C12'],
+    accent: '#FFD0C0',
+    label:  'Angry',
+    sub:    'Watch out!',
+    tip:    'Your stop is coming. Almost there.',
+  },
+  sad: {
+    grad:   ['#2193B0', '#6DD5ED', '#8E54E9'],
+    accent: '#D0E8FF',
+    label:  'Sad',
+    sub:    'Need a moment',
+    tip:    "It's okay not to be okay. Music helps.",
+  },
+  sleepy: {
+    grad:   ['#5C258D', '#9B59B6', '#4FACFE'],
+    accent: '#E0D0FF',
+    label:  'Sleepy',
+    sub:    'Zzz... commuting',
+    tip:    'Lean back, let the train do the work.',
+  },
 };
 
-const STATUS_CONFIG: Record<ConnectionStatus, {
-  label: string; color: string; icon: keyof typeof Ionicons.glyphMap;
-}> = {
-  disconnected: { label: 'Disconnected',  color: '#94A3B8', icon: 'bluetooth-outline' },
-  scanning:     { label: 'Scanning...',   color: '#FFD700', icon: 'search-outline'    },
-  connecting:   { label: 'Connecting...', color: '#009AC7', icon: 'bluetooth-outline' },
-  connected:    { label: 'Connected',     color: '#00A650', icon: 'bluetooth'         },
+const DEFAULT_MOOD = 'neutral';
+
+// ─── BLE status ───────────────────────────────────────────────────────────────
+const STATUS_CFG: Record<ConnectionStatus, { color: string; icon: keyof typeof Ionicons.glyphMap }> = {
+  disconnected: { color: 'rgba(255,255,255,0.45)', icon: 'bluetooth-outline' },
+  scanning:     { color: '#FFD700',                icon: 'search-outline'    },
+  connecting:   { color: '#87CEFA',                icon: 'bluetooth-outline' },
+  connected:    { color: '#7FFF9B',                icon: 'bluetooth'         },
 };
 
-// ─── Character component ──────────────────────────────────────────────────────
-function MoodCharacter({ mood }: { mood: string }) {
-  const cfg   = MOOD_CONFIG[mood] ?? MOOD_CONFIG['neutral'];
-  const [blink, setBlink] = useState(false);
+// ─── Commute next train fetcher ───────────────────────────────────────────────
+const TRANSIT_URL = 'https://7685-141-117-117-240.ngrok-free.app/api/transit/next';
+const STORAGE_KEY = 'commute_selected_line';
 
-  useEffect(() => {
-    const id = setInterval(() => {
-      setBlink(true);
-      setTimeout(() => setBlink(false), 120);
-    }, 3200);
-    return () => clearInterval(id);
-  }, []);
-
-  const eyeScale = blink ? 0.15 : 1;
-
-  const armRotLeft  = mood === 'happy' ? '-35deg' : mood === 'angry' ? '-65deg' : mood === 'stressed' ? '-20deg' : '15deg';
-  const armRotRight = mood === 'happy' ? '35deg'  : mood === 'angry' ? '65deg'  : mood === 'stressed' ? '20deg'  : '-15deg';
-
-  return (
-    <View style={[styles.charWrapper, { backgroundColor: cfg.bg }]}>
-      <View style={styles.charBody}>
-        {/* Head */}
-        <View style={[styles.head, { backgroundColor: '#FFDBB5', borderColor: cfg.color }]}>
-          {/* Hair */}
-          <View style={[styles.hair, { backgroundColor: cfg.color }]} />
-          {/* Eyes */}
-          <View style={styles.eyeRow}>
-            <View style={[styles.eye, { backgroundColor: cfg.color, transform: [{ scaleY: eyeScale }] }]} />
-            <View style={[styles.eye, { backgroundColor: cfg.color, transform: [{ scaleY: eyeScale }] }]} />
-          </View>
-          {/* Mouth */}
-          <View style={[
-            styles.mouth,
-            { borderColor: cfg.color },
-            mood === 'happy'   && styles.mouthSmile,
-            mood === 'sad'     && styles.mouthFrown,
-            mood === 'angry'   && styles.mouthAngry,
-            mood === 'stressed'&& styles.mouthWavy,
-            mood === 'neutral' && styles.mouthFlat,
-            mood === 'sleepy'  && styles.mouthFlat,
-          ]} />
-          {/* Extras */}
-          {mood === 'happy' && <View style={[styles.sparkA, { backgroundColor: cfg.color }]} />}
-          {mood === 'happy' && <View style={[styles.sparkB, { backgroundColor: '#FFD700' }]} />}
-          {mood === 'sleepy' && <Text style={[styles.zzz, { color: cfg.color }]}>Zzz</Text>}
-          {mood === 'stressed' && <View style={[styles.sweat, { backgroundColor: '#009AC7' }]} />}
-        </View>
-
-        {/* Neck */}
-        <View style={[styles.neck, { backgroundColor: '#FFDBB5' }]} />
-
-        {/* Torso */}
-        <View style={[styles.torso, { backgroundColor: cfg.color }]}>
-          <View style={[styles.torsoStripe, { backgroundColor: 'rgba(0,0,0,0.15)' }]} />
-        </View>
-
-        {/* Arms */}
-        <View style={[styles.armL, { backgroundColor: cfg.color, transform: [{ rotate: armRotLeft }] }]} />
-        <View style={[styles.armR, { backgroundColor: cfg.color, transform: [{ rotate: armRotRight }] }]} />
-
-        {/* Legs */}
-        <View style={styles.legRow}>
-          <View style={[styles.leg, { backgroundColor: N.ink }]} />
-          <View style={{ width: 10 }} />
-          <View style={[styles.leg, { backgroundColor: N.ink }]} />
-        </View>
-
-        {/* Feet */}
-        <View style={styles.footRow}>
-          <View style={[styles.foot, { backgroundColor: N.ink }]} />
-          <View style={{ width: 14 }} />
-          <View style={[styles.foot, { backgroundColor: N.ink }]} />
-        </View>
-      </View>
-
-      {/* Badge */}
-      <View style={[styles.moodBadge, { backgroundColor: cfg.color }]}>
-        <Text style={styles.moodBadgeText}>{cfg.label}</Text>
-      </View>
-    </View>
-  );
-}
-
-// ─── Device card ──────────────────────────────────────────────────────────────
-function DeviceCard() {
-  const { status, deviceName, data, connect, disconnect, error } = useBle();
-  const cfg  = STATUS_CONFIG[status];
-  const busy = status === 'scanning' || status === 'connecting';
-
-  return (
-    <Pressable
-      onPress={() => {
-        if (error) { Alert.alert('BLE Error', error, [{ text: 'OK' }]); return; }
-        if (status === 'connected') disconnect(); else connect();
-      }}
-      style={[styles.deviceCard, status === 'connected' && { borderColor: N.green }]}
-    >
-      <View style={styles.deviceLeft}>
-        <View style={[styles.deviceIcon, { backgroundColor: cfg.color + '22' }]}>
-          {busy
-            ? <ActivityIndicator size="small" color={cfg.color} />
-            : <Ionicons name={cfg.icon} size={16} color={cfg.color} />
-          }
-        </View>
-        <View>
-          <Text style={styles.deviceSmall}>COMMUBU DEVICE</Text>
-          <Text style={[styles.deviceName, { color: cfg.color }]}>
-            {status === 'connected' ? (deviceName ?? 'Connected') : cfg.label}
-          </Text>
-        </View>
-      </View>
-
-      {status === 'connected' ? (
-        <View style={styles.bioRow}>
-          <View style={styles.bioChip}>
-            <Text style={styles.bioHeart}>♥</Text>
-            <Text style={styles.bioNum}>{data.heartRate ?? '--'}</Text>
-            <Text style={styles.bioUnit}>bpm</Text>
-          </View>
-          <View style={[styles.bioChip, { marginLeft: 8 }]}>
-            <Text style={styles.bioStep}>↑</Text>
-            <Text style={styles.bioNum}>{data.steps ?? '--'}</Text>
-            <Text style={styles.bioUnit}>steps</Text>
-          </View>
-        </View>
-      ) : (
-        <View style={styles.tapBox}>
-          <Text style={styles.tapText}>TAP TO {status === 'disconnected' ? 'CONNECT' : 'CANCEL'}</Text>
-        </View>
-      )}
-    </Pressable>
-  );
+function minutesUntil(iso: string): number {
+  return Math.round((new Date(iso).getTime() - Date.now()) / 60000);
 }
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { status, deviceCustomName } = useBle();
+  const { status, deviceName, data, connect, disconnect, error } = useBle();
   const { mood } = useMood();
 
-  const activeMood = mood ?? 'neutral';
-  const cfg = MOOD_CONFIG[activeMood] ?? MOOD_CONFIG['neutral'];
+  const activeMood  = (mood ?? DEFAULT_MOOD) as string;
+  const theme       = MOOD_THEME[activeMood] ?? MOOD_THEME[DEFAULT_MOOD];
+  const bleStatus   = STATUS_CFG[status];
+  const isConnected = status === 'connected';
 
-  const tips: Record<string, string> = {
-    happy:   'Keep that energy! Share the good vibes with fellow commuters.',
-    neutral: 'A calm commute is a productive commute. You got this.',
-    stressed:'Try box breathing: 4s in → 4s hold → 4s out. Repeat.',
-    angry:   'Step back, breathe. Your stop is coming — almost there.',
-    sad:     "It's okay not to be okay. Your music has your back today.",
-    sleepy:  'Grab a window seat, lean back. The train does the work.',
+  // Next train state
+  const [nextTrain, setNextTrain]   = useState<{ dest: string; mins: number; line: string } | null>(null);
+  const [trainLine, setTrainLine]   = useState<string | null>(null);
+  const [trainLoading, setTrainLoading] = useState(false);
+
+  // Load saved line + fetch departure
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadLine() {
+      try {
+        // Dynamic import to avoid SSR issues
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        const saved = await AsyncStorage.getItem(STORAGE_KEY);
+        if (saved && mounted) setTrainLine(saved);
+      } catch {}
+    }
+    loadLine();
+    return () => { mounted = false; };
+  }, []);
+
+  const fetchTrain = useCallback(async () => {
+    if (!trainLine) return;
+    setTrainLoading(true);
+    try {
+      const res  = await fetch(TRANSIT_URL, { headers: { 'ngrok-skip-browser-warning': '1' } });
+      if (!res.ok) throw new Error('fetch failed');
+      const json = await res.json();
+      const deps: any[] = (json.departures ?? [])
+        .filter((d: any) => d.line?.toLowerCase().includes(trainLine.toLowerCase()))
+        .filter((d: any) => minutesUntil(d.time) > -1)
+        .slice(0, 1);
+
+      if (deps.length > 0) {
+        setNextTrain({ dest: deps[0].destination, mins: minutesUntil(deps[0].time), line: deps[0].line });
+      }
+    } catch {
+      setNextTrain(null);
+    } finally {
+      setTrainLoading(false);
+    }
+  }, [trainLine]);
+
+  useEffect(() => {
+    fetchTrain();
+    const id = setInterval(fetchTrain, 30_000);
+    return () => clearInterval(id);
+  }, [fetchTrain]);
+
+  const handleBle = () => {
+    if (error) { Alert.alert('BLE Error', error, [{ text: 'OK' }]); return; }
+    if (isConnected) disconnect(); else connect();
   };
 
+  // Steps display
+  const steps    = isConnected && data.steps    != null ? data.steps    : null;
+  const heartRate= isConnected && data.heartRate != null ? data.heartRate : null;
+
   return (
-    <View style={[styles.root, { backgroundColor: cfg.bg, paddingTop: insets.top }]}>
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-
-        {/* ── Top bar ── */}
-        <View style={styles.topBar}>
-          <View>
-            <Text style={styles.appName}>COMMUBU</Text>
-            <Text style={styles.appSub}>
-              {deviceCustomName ? `Hi, ${deviceCustomName}` : 'Your commute companion'}
-            </Text>
+    <View style={styles.root}>
+      <StatusBar barStyle="light-content" />
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ════════════════════════════════════════
+            HERO — full-bleed gradient section
+        ════════════════════════════════════════ */}
+        <LinearGradient
+          colors={theme.grad}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.hero, { paddingTop: insets.top + 16 }]}
+        >
+          {/* Top row: app name + BLE pill */}
+          <View style={styles.heroTop}>
+            <Text style={styles.heroAppName}>COMMUBU</Text>
+            <Pressable onPress={handleBle} style={styles.blePill} hitSlop={12}>
+              {status === 'scanning' || status === 'connecting'
+                ? <ActivityIndicator size="small" color="#fff" style={{ marginRight: 5 }} />
+                : <Ionicons name={bleStatus.icon} size={13} color={bleStatus.color} style={{ marginRight: 4 }} />
+              }
+              <Text style={[styles.blePillText, { color: bleStatus.color }]}>
+                {isConnected ? (deviceName ?? 'Connected') : status === 'disconnected' ? 'Connect device' : status === 'scanning' ? 'Scanning...' : 'Connecting...'}
+              </Text>
+            </Pressable>
           </View>
-          <View style={[styles.connPill, { backgroundColor: status === 'connected' ? N.green : '#94A3B8' }]}>
-            <Ionicons
-              name={status === 'connected' ? 'bluetooth' : 'bluetooth-outline'}
-              size={11}
-              color={N.white}
-            />
-            <Text style={styles.connPillText}>
-              {status === 'connected' ? 'LIVE' : 'OFFLINE'}
-            </Text>
+
+          {/* Character placeholder */}
+          <View style={styles.charPlaceholder}>
+            <Text style={styles.charAscii}>( ^_^ )</Text>
+            <Text style={styles.charNote}>Character art coming soon</Text>
           </View>
-        </View>
 
-        {/* ── Mood heading ── */}
-        <View style={styles.moodHeading}>
-          <Text style={[styles.moodBig, { color: cfg.color }]}>{cfg.label}</Text>
-          <Text style={styles.moodSub}>{cfg.feeling}</Text>
-          {mood == null && (
-            <Text style={styles.moodHint}>
-              {status === 'connected'
-                ? 'Detecting mood from device...'
-                : 'Override mood from Playlist tab'}
-            </Text>
-          )}
-        </View>
+          {/* Mood identity */}
+          <View style={styles.heroMood}>
+            <Text style={styles.heroMoodLabel}>{theme.label}</Text>
+            <Text style={styles.heroMoodSub}>{theme.sub}</Text>
+          </View>
 
-        {/* ── Character ── */}
-        <MoodCharacter mood={activeMood} />
+          {/* Inline stats row — steps + HR */}
+          <View style={styles.heroStats}>
+            <View style={styles.heroStat}>
+              <Text style={styles.heroStatNum}>{steps != null ? steps.toLocaleString() : '--'}</Text>
+              <Text style={styles.heroStatLabel}>STEPS</Text>
+            </View>
+            <View style={styles.heroStatDivider} />
+            <View style={styles.heroStat}>
+              <Text style={styles.heroStatNum}>{heartRate != null ? heartRate : '--'}</Text>
+              <Text style={styles.heroStatLabel}>BPM</Text>
+            </View>
+            <View style={styles.heroStatDivider} />
+            <View style={styles.heroStat}>
+              <Text style={styles.heroStatNum}>{mood ? theme.label : '--'}</Text>
+              <Text style={styles.heroStatLabel}>MOOD</Text>
+            </View>
+          </View>
+        </LinearGradient>
 
-        {/* ── Device card ── */}
-        <DeviceCard />
+        {/* ════════════════════════════════════════
+            BODY — white section, flows from hero
+        ════════════════════════════════════════ */}
+        <View style={styles.body}>
 
-        {/* ── Tip ── */}
-        <View style={[styles.tipCard, { borderLeftColor: cfg.color }]}>
-          <Text style={styles.tipLabel}>COMMUBU TIP</Text>
-          <Text style={styles.tipText}>{tips[activeMood]}</Text>
-        </View>
+          {/* ── Next train ── */}
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>NEXT TRAIN</Text>
+            {!trainLine ? (
+              <View style={styles.trainEmpty}>
+                <Ionicons name="train-outline" size={28} color="#CBD5E1" />
+                <Text style={styles.trainEmptyText}>Select a GO line in the Commute tab</Text>
+              </View>
+            ) : trainLoading ? (
+              <View style={styles.trainEmpty}>
+                <ActivityIndicator color="#CBD5E1" />
+              </View>
+            ) : nextTrain ? (
+              <View style={styles.trainRow}>
+                <View style={styles.trainLeft}>
+                  <Text style={styles.trainDest} numberOfLines={1}>{nextTrain.dest}</Text>
+                  <Text style={styles.trainLine}>{nextTrain.line}</Text>
+                </View>
+                <View style={[
+                  styles.trainMins,
+                  { backgroundColor: nextTrain.mins <= 3 ? '#FEE2E2' : nextTrain.mins <= 8 ? '#FEF3C7' : '#F0FDF4' },
+                ]}>
+                  <Text style={[
+                    styles.trainMinsNum,
+                    { color: nextTrain.mins <= 3 ? '#DC2626' : nextTrain.mins <= 8 ? '#D97706' : '#16A34A' },
+                  ]}>
+                    {nextTrain.mins}
+                  </Text>
+                  <Text style={[
+                    styles.trainMinsUnit,
+                    { color: nextTrain.mins <= 3 ? '#DC2626' : nextTrain.mins <= 8 ? '#D97706' : '#16A34A' },
+                  ]}>min</Text>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.trainEmpty}>
+                <Text style={styles.trainEmptyText}>No upcoming departures found</Text>
+              </View>
+            )}
+          </View>
 
-        {/* ── Override nudge ── */}
-        <View style={styles.nudge}>
-          <Ionicons name="musical-notes-outline" size={13} color="#94A3B8" />
-          <Text style={styles.nudgeText}>
-            Tap Playlist tab to override mood and control your music
-          </Text>
+          {/* Divider */}
+          <View style={styles.divider} />
+
+          {/* ── Mood tip ── */}
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>TODAY'S TIP</Text>
+            <Text style={styles.tipText}>{theme.tip}</Text>
+          </View>
+
+          {/* Divider */}
+          <View style={styles.divider} />
+
+          {/* ── Override nudge ── */}
+          <Pressable style={styles.nudgeRow}>
+            <View style={[styles.nudgeIconBox, { backgroundColor: theme.grad[0] + '18' }]}>
+              <Ionicons name="musical-notes-outline" size={16} color={theme.grad[0]} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.nudgeTitle}>Override your mood</Text>
+              <Text style={styles.nudgeSub}>Go to Playlist tab to manually set your vibe</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="#CBD5E1" />
+          </Pressable>
+
         </View>
 
         <View style={{ height: 110 }} />
@@ -263,95 +299,187 @@ export default function HomeScreen() {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  root:   { flex: 1 },
-  scroll: { paddingHorizontal: 20 },
+  root:          { flex: 1, backgroundColor: '#FFFFFF' },
+  scroll:        { flex: 1 },
+  scrollContent: { flexGrow: 1 },
 
-  // Top bar
-  topBar:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14 },
-  appName:      { fontSize: 22, fontWeight: '900', fontFamily: '429Font', color: N.ink, letterSpacing: 2 },
-  appSub:       { fontSize: 11, color: '#64748B', fontWeight: '500' },
-  connPill:     { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
-  connPillText: { fontSize: 10, fontWeight: '800', color: N.white, letterSpacing: 1 },
-
-  // Mood heading
-  moodHeading: { alignItems: 'center', marginBottom: 8 },
-  moodBig:     { fontSize: 40, fontWeight: '900', fontFamily: '429Font', letterSpacing: 4 },
-  moodSub:     { fontSize: 14, color: '#64748B', fontWeight: '600', marginTop: 2 },
-  moodHint:    { fontSize: 11, color: '#94A3B8', marginTop: 6, textAlign: 'center' },
-
-  // Character
-  charWrapper: {
-    alignSelf: 'center',
-    alignItems: 'center',
-    paddingVertical: 28,
-    paddingHorizontal: 32,
-    borderRadius: 24,
-    borderWidth: 3,
-    borderColor: N.ink,
-    width: width - 40,
-    marginBottom: 20,
-    position: 'relative',
+  // ── Hero ──
+  hero: {
+    paddingHorizontal: 24,
+    paddingBottom: 32,
   },
-  charBody:  { alignItems: 'center' },
-  head: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    borderWidth: 3,
+  heroTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  heroAppName: {
+    fontSize: 18,
+    fontWeight: '900',
+    fontFamily: '429Font',
+    color: '#FFFFFF',
+    letterSpacing: 3,
+    opacity: 0.95,
+  },
+  blePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.18)',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  blePillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+
+  // Character placeholder
+  charPlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',
-    position: 'relative',
+    marginVertical: 20,
   },
-  hair:    { position: 'absolute', top: -4, width: 72, height: 26, borderTopLeftRadius: 36, borderTopRightRadius: 36 },
-  eyeRow:  { flexDirection: 'row', gap: 18, marginTop: 8 },
-  eye:     { width: 10, height: 12, borderRadius: 5 },
-  mouth:   { width: 26, height: 9, borderRadius: 5, borderWidth: 2.5, marginTop: 8, backgroundColor: 'transparent' },
-  mouthSmile: { borderBottomLeftRadius: 14, borderBottomRightRadius: 14, borderTopWidth: 0 },
-  mouthFrown: { borderTopLeftRadius: 14, borderTopRightRadius: 14, borderBottomWidth: 0, marginTop: 12 },
-  mouthAngry: { borderTopLeftRadius: 14, borderTopRightRadius: 14, borderBottomWidth: 0, marginTop: 11 },
-  mouthWavy:  { width: 26, height: 6, borderRadius: 2, marginTop: 10 },
-  mouthFlat:  { height: 3, borderRadius: 2, borderTopWidth: 0, borderLeftWidth: 0, borderRightWidth: 0, marginTop: 10 },
-  sparkA: { position: 'absolute', top: 6, right: -6, width: 7, height: 7, borderRadius: 4 },
-  sparkB: { position: 'absolute', top: 18, right: -12, width: 5, height: 5, borderRadius: 3 },
-  sweat:  { position: 'absolute', top: 6, right: -10, width: 8, height: 13, borderRadius: 5 },
-  zzz:    { position: 'absolute', top: -10, right: -24, fontSize: 13, fontWeight: '900' },
-  neck:   { width: 22, height: 10 },
-  torso:  { width: 58, height: 54, borderRadius: 8, borderWidth: 3, borderColor: N.ink, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  torsoStripe: { width: '100%', height: 10 },
-  armL: { position: 'absolute', top: 106, left: 50, width: 15, height: 46, borderRadius: 8, borderWidth: 2, borderColor: N.ink },
-  armR: { position: 'absolute', top: 106, right: 50, width: 15, height: 46, borderRadius: 8, borderWidth: 2, borderColor: N.ink },
-  legRow: { flexDirection: 'row', marginTop: 4 },
-  leg:    { width: 20, height: 38, borderRadius: 5, borderWidth: 2, borderColor: N.ink },
-  footRow:{ flexDirection: 'row' },
-  foot:   { width: 24, height: 13, borderRadius: 7, borderWidth: 2, borderColor: N.ink },
-  moodBadge: {
-    position: 'absolute', bottom: -14,
-    paddingHorizontal: 18, paddingVertical: 5,
-    borderRadius: 20, borderWidth: 2.5, borderColor: N.ink,
+  charAscii: {
+    fontSize: 52,
+    color: 'rgba(255,255,255,0.95)',
+    letterSpacing: 4,
   },
-  moodBadgeText: { fontSize: 11, fontWeight: '900', color: N.white, letterSpacing: 1.5 },
+  charNote: {
+    fontSize: 10,
+    color: 'rgba(255,255,255,0.5)',
+    marginTop: 6,
+    letterSpacing: 0.5,
+  },
 
-  // Device card
-  deviceCard:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: N.white, borderRadius: 16, borderWidth: 2.5, borderColor: N.ink, padding: 14, marginBottom: 14 },
-  deviceLeft:  { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  deviceIcon:  { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  deviceSmall: { fontSize: 9, fontWeight: '700', color: '#94A3B8', letterSpacing: 1 },
-  deviceName:  { fontSize: 13, fontWeight: '700', marginTop: 1 },
-  bioRow:      { flexDirection: 'row' },
-  bioChip:     { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, gap: 3 },
-  bioHeart:    { fontSize: 10, color: '#E4000F' },
-  bioStep:     { fontSize: 10, color: '#009AC7' },
-  bioNum:      { fontSize: 15, fontWeight: '800', color: N.ink },
-  bioUnit:     { fontSize: 9, color: '#94A3B8', fontWeight: '600' },
-  tapBox:      { backgroundColor: '#F1F5F9', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
-  tapText:     { fontSize: 9, fontWeight: '800', color: '#64748B', letterSpacing: 0.5 },
+  // Mood
+  heroMood: {
+    alignItems: 'center',
+    marginBottom: 28,
+  },
+  heroMoodLabel: {
+    fontSize: 38,
+    fontWeight: '900',
+    fontFamily: '429Font',
+    color: '#FFFFFF',
+    letterSpacing: 2,
+  },
+  heroMoodSub: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.75)',
+    fontWeight: '500',
+    marginTop: 4,
+  },
+
+  // Stats row
+  heroStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.15)',
+    borderRadius: 20,
+    paddingVertical: 16,
+    paddingHorizontal: 8,
+  },
+  heroStat: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  heroStatNum: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.5,
+  },
+  heroStatLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.6)',
+    letterSpacing: 1.5,
+    marginTop: 3,
+  },
+  heroStatDivider: {
+    width: 1,
+    height: 32,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+
+  // ── Body ──
+  body: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    marginTop: -20,
+    paddingTop: 28,
+    paddingHorizontal: 24,
+    flex: 1,
+  },
+
+  section:      { paddingVertical: 6 },
+  sectionLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 1.5,
+    marginBottom: 12,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 20,
+  },
+
+  // Train
+  trainRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  trainLeft:     { flex: 1, marginRight: 16 },
+  trainDest:     { fontSize: 20, fontWeight: '700', color: '#0F172A', letterSpacing: -0.3 },
+  trainLine:     { fontSize: 12, color: '#94A3B8', fontWeight: '500', marginTop: 2 },
+  trainMins: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    minWidth: 72,
+  },
+  trainMinsNum:  { fontSize: 28, fontWeight: '900', lineHeight: 32 },
+  trainMinsUnit: { fontSize: 10, fontWeight: '700', letterSpacing: 1 },
+  trainEmpty: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+  },
+  trainEmptyText: { fontSize: 14, color: '#94A3B8', fontWeight: '500' },
 
   // Tip
-  tipCard:  { backgroundColor: N.white, borderRadius: 16, borderWidth: 2.5, borderColor: N.ink, padding: 16, borderLeftWidth: 6, marginBottom: 14 },
-  tipLabel: { fontSize: 9, fontWeight: '800', color: '#94A3B8', letterSpacing: 1, marginBottom: 5 },
-  tipText:  { fontSize: 13, color: N.ink, fontWeight: '500', lineHeight: 20 },
+  tipText: {
+    fontSize: 15,
+    color: '#334155',
+    fontWeight: '500',
+    lineHeight: 23,
+  },
 
-  // Nudge
-  nudge:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-  nudgeText: { fontSize: 11, color: '#94A3B8', textAlign: 'center', flex: 1 },
+  // Override nudge
+  nudgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 4,
+  },
+  nudgeIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  nudgeTitle: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
+  nudgeSub:   { fontSize: 12, color: '#94A3B8', marginTop: 1 },
 });
