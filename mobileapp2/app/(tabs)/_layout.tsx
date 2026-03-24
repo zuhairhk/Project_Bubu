@@ -1,6 +1,8 @@
 import { Tabs } from 'expo-router';
 import FloatingMenu from '@/components/FloatingMenu';
 import { View } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
+WebBrowser.maybeCompleteAuthSession();
 
 export default function TabLayout() {
   return (

@@ -6,14 +6,10 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { useColorScheme } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
-import * as Linking from 'expo-linking';
 import { BleProvider } from '@/lib/BleContext';
 import { MoodProvider } from '@/lib/MoodContext';
 
-// This is critical — tells expo-web-browser to close the auth session
-// when the app receives the redirect deep link back from Spotify
 WebBrowser.maybeCompleteAuthSession();
-
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
@@ -40,10 +36,6 @@ function RootLayoutNav() {
         <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
           <Stack>
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen
-              name="callback"
-              options={{ headerShown: false, presentation: 'transparentModal' }}
-            />
             <Stack.Screen name="+not-found" />
           </Stack>
         </ThemeProvider>
