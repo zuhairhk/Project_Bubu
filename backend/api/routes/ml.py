@@ -1,77 +1,126 @@
 """
-ML routes — 6-mood prediction, training, model info.
+ML routes — mood prediction, training, and model info.
 """
-import os
-import json
 from fastapi import APIRouter, HTTPException
-from core.models import HealthSnapshot, MoodPrediction, TrainRequest
-from core.config import MODEL_DIR
-from db.store import save_snapshot, count_labeled
+from datetime import datetime
+from core.models import HealthSnapshot, MoodPrediction, TrainRequest, MOOD_EMOJI
 
 router = APIRouter(prefix="/api/ml", tags=["ml"])
-METADATA_FILE = os.path.join(MODEL_DIR, "model_metadata.json")
+
+# Mood → Spotify audio seed parameters
+# These mirror the MOOD_SEEDS in spotifyApi.ts so backend and frontend agree
+MOOD_PLAYLIST_SEEDS = {
+    "happy": {
+        "seed_genres":    ["pop", "dance", "happy"],
+        "target_energy":  0.80,
+        "target_valence": 0.90,
+        "target_tempo":   120,
+        "min_energy":     0.60,
+        "min_valence":    0.70,
+        "description":    "Upbeat, positive energy tracks to match your great mood",
+    },
+    "neutral": {
+        "seed_genres":    ["indie", "chill", "pop"],
+        "target_energy":  0.45,
+        "target_valence": 0.50,
+        "target_tempo":   100,
+        "description":    "Easy-going tracks for a balanced, relaxed commute",
+    },
+    "stressed": {
+        "seed_genres":    ["ambient", "chill", "study"],
+        "target_energy":  0.30,
+        "target_valence": 0.55,
+        "target_tempo":   80,
+        "max_energy":     0.50,
+        "description":    "Calming, low-energy tracks to help you decompress",
+    },
+    "angry": {
+        "seed_genres":    ["chill", "acoustic", "soul"],
+        "target_energy":  0.35,
+        "target_valence": 0.60,
+        "target_tempo":   85,
+        "max_energy":     0.55,
+        "description":    "Soothing tracks to bring your energy back down",
+    },
+    "sad": {
+        "seed_genres":    ["sad", "indie", "singer-songwriter"],
+        "target_energy":  0.25,
+        "target_valence": 0.25,
+        "target_tempo":   75,
+        "description":    "Gentle, melancholic tracks that match your mood",
+    },
+    "sleepy": {
+        "seed_genres":    ["sleep", "ambient", "classical"],
+        "target_energy":  0.10,
+        "target_valence": 0.35,
+        "target_tempo":   65,
+        "max_energy":     0.25,
+        "description":    "Soft, slow tracks to ease you into the day",
+    },
+}
 
 
 @router.post("/predict", response_model=MoodPrediction)
-def predict(data: HealthSnapshot):
+def predict(snapshot: HealthSnapshot):
     """
-    Predict user mood from health + Spotify snapshot.
-
-    Returns one of: happy 😊 | neutral 😐 | stressed 😤 | angry 😠 | sad 😢 | sleepy 😴
-
-    Example with Spotify:
-    ```json
-    {
-      "user_id": "dev_user",
-      "heart_rate": 112,
-      "steps_last_minute": 8,
-      "location_variance": 0.00043,
-      "spotify": {
-        "track_name": "Lose Yourself",
-        "artist_name": "Eminem",
-        "energy": 0.95,
-        "valence": 0.31,
-        "tempo": 171.0
-      }
-    }
-    ```
+    Predict mood from a health snapshot.
+    Spotify audio features are optional — the model works on HR + steps alone,
+    but confidence will be lower without them.
     """
     from ml.inference import predict_mood
-
-    record = data.model_dump()
-    save_snapshot(record)
-
     try:
-        return predict_mood(record)
+        return predict_mood(snapshot.model_dump())
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/train")
-def retrain(req: TrainRequest = TrainRequest()):
-    """Retrain the mood classifier on all labeled DB snapshots + synthetic data."""
+def train(req: TrainRequest):
+    """Retrain the mood classifier."""
     from ml.models.training.train import train_model
-
     try:
-        metadata = train_model(min_samples=req.min_samples)
+        return train_model(min_samples=req.min_samples)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Training failed: {str(e)}")
-
-    return {"status": "trained", **metadata}
 
 
 @router.get("/model/info")
 def model_info():
-    """Return metadata about the current model."""
-    if not os.path.exists(METADATA_FILE):
-        return {
-            "status":                "no_model_trained",
-            "labeled_samples_in_db": count_labeled(),
-            "moods_supported":       ["happy", "neutral", "stressed", "angry", "sad", "sleepy"],
+    """Return metadata about the currently loaded model."""
+    import os, json
+    from core.config import MODEL_DIR
+    meta_path = os.path.join(MODEL_DIR, "model_metadata.json")
+    if not os.path.exists(meta_path):
+        raise HTTPException(status_code=404, detail="No model trained yet")
+    with open(meta_path) as f:
+        return json.load(f)
+
+
+@router.get("/playlist-seeds/{mood}")
+def playlist_seeds(mood: str):
+    """
+    Return Spotify recommendation parameters for a given mood.
+    The mobile app can use these directly with the Spotify /recommendations API.
+    """
+    if mood not in MOOD_PLAYLIST_SEEDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown mood '{mood}'. Valid: {list(MOOD_PLAYLIST_SEEDS.keys())}",
+        )
+    return {
+        "mood":    mood,
+        "emoji":   MOOD_EMOJI.get(mood, "🎵"),
+        "seeds":   MOOD_PLAYLIST_SEEDS[mood],
+    }
+
+
+@router.get("/playlist-seeds")
+def all_playlist_seeds():
+    """Return Spotify seed parameters for all 6 moods."""
+    return {
+        mood: {
+            "emoji": MOOD_EMOJI.get(mood, "🎵"),
+            **seeds,
         }
-    with open(METADATA_FILE) as f:
-        meta = json.load(f)
-    meta["labeled_samples_in_db"] = count_labeled()
-    return meta
+        for mood, seeds in MOOD_PLAYLIST_SEEDS.items()
+    }
