@@ -27,8 +27,10 @@ export async function searchTracks(token: string, query: string, limit = 10) {
   return spotifyFetch(`/search?q=${encoded}&type=track&limit=${limit}`, token);
 }
 
-export async function getUserProfile(token: string): Promise<{ id: string; display_name: string }> {
-  return spotifyFetch('/me', token);
+export async function getUserProfile(token: string) {
+  const result = await spotifyFetch('/me', token);
+  console.log('Spotify user profile:', JSON.stringify(result));
+  return result;
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -167,10 +169,14 @@ export async function createPlaylist(
   name: string,
   description = '',
 ): Promise<{ id: string; external_urls: { spotify: string } }> {
-  return spotifyFetch(`/users/${userId}/playlists`, token, {
+  console.log('Creating playlist for user:', userId);
+  console.log('Token starts with:', token.substring(0, 20));
+  const result = await spotifyFetch(`/users/${userId}/playlists`, token, {
     method: 'POST',
     body: JSON.stringify({ name, description, public: false }),
   });
+  console.log('Playlist created:', result);
+  return result;
 }
 
 export async function addTracksToPlaylist(
