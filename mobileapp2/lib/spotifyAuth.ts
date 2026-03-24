@@ -10,10 +10,8 @@ WebBrowser.maybeCompleteAuthSession();
 
 const CLIENT_ID = '346580e071a3460da5a50ec2b7e57390';
 
-// show_dialog=true forces Spotify to always show the permission consent screen
-// so the user grants the latest scopes every time — avoids stale token issues
 const discovery = {
-  authorizationEndpoint: 'https://accounts.spotify.com/authorize?show_dialog=true',
+  authorizationEndpoint: 'https://accounts.spotify.com/authorize',
 };
 
 async function exchangeCodeForToken(
@@ -64,6 +62,8 @@ export function useSpotifyAuth(): [
       redirectUri,
       responseType: 'code',
       usePKCE:      true,
+      // Force Spotify to always show consent screen so new scopes are granted
+      extraParams: { show_dialog: 'true' },
     },
     discovery,
   );
