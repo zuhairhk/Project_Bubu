@@ -44,6 +44,7 @@ export function useSpotifyAuth(): [
   () => Promise<{ access_token: string } | null>,
 ] {
   const redirectUri = AuthSession.makeRedirectUri({ native: 'commubu-login://callback' });
+  console.log('Spotify redirect URI:', redirectUri);
 
   const [request, response, promptAsync] = AuthSession.useAuthRequest(
     {
