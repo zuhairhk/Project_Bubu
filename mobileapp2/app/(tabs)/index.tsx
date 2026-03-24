@@ -276,7 +276,14 @@ export default function HomeScreen() {
         {/* ── Next train ── */}
         <View style={S.card}>
           <View style={S.cardTopRow}>
-            <Text style={S.cardLabel}>Next Train</Text>
+            <View>
+              <Text style={S.cardLabel}>Next Train</Text>
+              {trainLine && (
+                <Text style={{ fontSize: 11, color: C.indigo, fontWeight: '600', marginTop: 1 }}>
+                  {trainLine}
+                </Text>
+              )}
+            </View>
             <View style={[S.iconChip, { backgroundColor: C.indigo + '15' }]}>
               <Ionicons name="train-outline" size={14} color={C.indigo} />
             </View>
