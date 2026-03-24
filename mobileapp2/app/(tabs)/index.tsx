@@ -1,4 +1,4 @@
-// CLEAN MODERN HOME (no messy gradients, unified UI)
+// CLEAN MODERN HOME (matches your reference UI)
 
 import React, { useEffect, useState, useCallback } from 'react';
 import {
@@ -13,12 +13,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { View, Text } from '@/components/Themed';
-import { useBle, ConnectionStatus } from '@/lib/BleContext';
+import { useBle } from '@/lib/BleContext';
 import { useMood } from '@/lib/MoodContext';
 
-// ─── Minimal theme ─────────────────────────────
 const COLORS = {
-  bg: '#F7F8FC',
+  bg: '#F5F6FA',
   card: '#FFFFFF',
   text: '#0F172A',
   sub: '#64748B',
@@ -26,15 +25,7 @@ const COLORS = {
   border: '#E2E8F0',
 };
 
-// ─── BLE ─────────────────────────────
-const STATUS_CFG: Record<ConnectionStatus, { color: string; icon: keyof typeof Ionicons.glyphMap }> = {
-  disconnected: { color: '#94A3B8', icon: 'bluetooth-outline' },
-  scanning:     { color: '#FBBF24', icon: 'search-outline' },
-  connecting:   { color: '#60A5FA', icon: 'bluetooth-outline' },
-  connected:    { color: '#22C55E', icon: 'bluetooth' },
-};
-
-// ─── Transit ─────────────────────────────
+// ─── Utils ─────────────────────────────
 const TRANSIT_URL = 'https://7685-141-117-117-240.ngrok-free.app/api/transit/next';
 const STORAGE_KEY = 'commute_selected_line';
 
@@ -42,18 +33,33 @@ function minutesUntil(iso: string) {
   return Math.round((new Date(iso).getTime() - Date.now()) / 60000);
 }
 
+// ─── Card Wrapper ──────────────────────
+function Card({ children }: any) {
+  return <View style={styles.card}>{children}</View>;
+}
+
+// ─── Progress Bar ──────────────────────
+function ProgressBar({ value }: { value: number }) {
+  return (
+    <View style={styles.progressTrack}>
+      <View style={[styles.progressFill, { width: `${value}%` }]} />
+    </View>
+  );
+}
+
+// ─── Main ──────────────────────────────
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { status, deviceName, data, connect, disconnect, error } = useBle();
   const { mood } = useMood();
 
-  const ble = STATUS_CFG[status];
-  const isConnected = status === 'connected';
-
   const [nextTrain, setNextTrain] = useState<any>(null);
   const [trainLine, setTrainLine] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const isConnected = status === 'connected';
+
+  // Load saved line
   useEffect(() => {
     import('@react-native-async-storage/async-storage').then(async (m) => {
       const val = await m.default.getItem(STORAGE_KEY);
@@ -61,6 +67,7 @@ export default function HomeScreen() {
     });
   }, []);
 
+  // Fetch train
   const fetchTrain = useCallback(async () => {
     if (!trainLine) return;
     setLoading(true);
@@ -91,6 +98,10 @@ export default function HomeScreen() {
     isConnected ? disconnect() : connect();
   };
 
+  const steps = data.steps ?? 0;
+  const heart = data.heartRate ?? null;
+  const stepPercent = Math.min((steps / 10000) * 100, 100);
+
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
@@ -99,59 +110,73 @@ export default function HomeScreen() {
 
         {/* HEADER */}
         <View style={styles.header}>
-          <Text style={styles.title}>Commubu</Text>
+          <Text style={styles.title}>Home</Text>
 
-          <Pressable onPress={handleBle} style={styles.ble}>
-            <Ionicons name={ble.icon} size={16} color={ble.color} />
+          <Pressable onPress={handleBle}>
+            <Ionicons
+              name="bluetooth"
+              size={18}
+              color={isConnected ? '#22C55E' : '#94A3B8'}
+            />
           </Pressable>
         </View>
 
-        {/* HERO (center focus like your reference) */}
-        <View style={styles.hero}>
+        {/* MOOD */}
+        <View style={styles.moodSection}>
           <Text style={styles.emoji}>
             {mood ? '😊' : '✨'}
           </Text>
-
-          <Text style={styles.heroText}>
-            {mood ?? 'Select mood'}
+          <Text style={styles.moodText}>
+            {mood ?? 'No mood selected'}
+          </Text>
+          <Text style={styles.subText}>
+            Character coming soon
           </Text>
         </View>
 
-        {/* MAIN CARD */}
-        <View style={styles.card}>
+        {/* NEXT TRAIN */}
+        <Card>
+          <Text style={styles.cardLabel}>Next Train</Text>
 
-          {/* TRAIN */}
-          <View style={styles.row}>
-            <Text style={styles.label}>Next Train</Text>
-
-            {loading ? (
-              <ActivityIndicator />
-            ) : nextTrain ? (
-              <Text style={styles.value}>
+          {loading ? (
+            <ActivityIndicator />
+          ) : nextTrain ? (
+            <>
+              <Text style={styles.bigValue}>
                 {nextTrain.mins} min
               </Text>
-            ) : (
-              <Text style={styles.sub}>—</Text>
-            )}
-          </View>
+              <Text style={styles.subText}>
+                {nextTrain.dest}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.subText}>No data</Text>
+          )}
+        </Card>
 
-          {/* STEPS */}
-          <View style={styles.row}>
-            <Text style={styles.label}>Steps</Text>
-            <Text style={styles.value}>
-              {data.steps ?? '--'}
-            </Text>
-          </View>
+        {/* STEPS */}
+        <Card>
+          <Text style={styles.cardLabel}>Steps</Text>
 
-          {/* HEART */}
-          <View style={styles.row}>
-            <Text style={styles.label}>Heart</Text>
-            <Text style={styles.value}>
-              {data.heartRate ?? '--'}
-            </Text>
-          </View>
+          <Text style={styles.bigValue}>
+            {steps.toLocaleString()} / 10,000
+          </Text>
 
-        </View>
+          <ProgressBar value={stepPercent} />
+        </Card>
+
+        {/* HEART */}
+        <Card>
+          <Text style={styles.cardLabel}>Heart Rate</Text>
+
+          <Text style={styles.bigValue}>
+            {heart ?? '--'}
+          </Text>
+
+          <Text style={styles.subText}>
+            {heart ? 'bpm' : 'No data detected'}
+          </Text>
+        </Card>
 
       </ScrollView>
     </View>
@@ -163,14 +188,14 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: COLORS.bg },
 
   container: {
-    paddingHorizontal: 20,
-    paddingBottom: 40,
+    padding: 20,
+    gap: 18,
   },
 
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 30,
+    marginBottom: 10,
   },
 
   title: {
@@ -179,53 +204,58 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
 
-  ble: {
-    padding: 10,
-  },
-
-  hero: {
+  moodSection: {
     alignItems: 'center',
-    marginBottom: 30,
-  },
-
-  emoji: {
-    fontSize: 64,
     marginBottom: 10,
   },
 
-  heroText: {
+  emoji: {
+    fontSize: 60,
+  },
+
+  moodText: {
     fontSize: 18,
+    fontWeight: '600',
+    color: COLORS.text,
+  },
+
+  subText: {
+    fontSize: 13,
     color: COLORS.sub,
   },
 
   card: {
     backgroundColor: COLORS.card,
-    borderRadius: 20,
-    padding: 20,
+    borderRadius: 18,
+    padding: 18,
     shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 3,
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
   },
 
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-
-  label: {
-    fontSize: 14,
+  cardLabel: {
+    fontSize: 13,
     color: COLORS.sub,
+    marginBottom: 6,
   },
 
-  value: {
-    fontSize: 16,
-    fontWeight: '700',
+  bigValue: {
+    fontSize: 26,
+    fontWeight: '800',
     color: COLORS.text,
+    marginBottom: 8,
   },
 
-  sub: {
-    color: COLORS.sub,
+  progressTrack: {
+    height: 8,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 6,
+    overflow: 'hidden',
+  },
+
+  progressFill: {
+    height: '100%',
+    backgroundColor: COLORS.accent,
   },
 });
