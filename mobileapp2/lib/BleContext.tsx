@@ -6,18 +6,18 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { NativeModules } from 'react-native';
-import { BleManager, Device, Subscription } from 'react-native-ble-plx';
+import { NativeModules, Platform, PermissionsAndroid, Alert } from 'react-native';
+import { BleManager, Device, Subscription, State } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
 
-// ─── UUIDs (match ESP32 firmware exactly) ────────────────────────────────────
+// ─── UUIDs — must match ESP32 firmware exactly ────────────────────────────────
 const SERVICE_UUID    = '6E400001-B5A3-F393-E0A9-E50E24DCCA9E';
+const TX_CHAR_UUID    = '6E400003-B5A3-F393-E0A9-E50E24DCCA9E'; // ESP32 → Phone (notify)
+const HR_CHAR_UUID    = '6E400008-B5A3-F393-E0A9-E50E24DCCA9E'; // HR byte (notify)
+const NAME_CHAR_UUID  = '6E400004-B5A3-F393-E0A9-E50E24DCCA9E'; // Custom device name
 const RX_CHAR_UUID    = '6E400002-B5A3-F393-E0A9-E50E24DCCA9E'; // Phone → ESP32
-const TX_CHAR_UUID    = '6E400003-B5A3-F393-E0A9-E50E24DCCA9E'; // ESP32 → Phone (steps, battery strings)
-const NAME_CHAR_UUID  = '6E400004-B5A3-F393-E0A9-E50E24DCCA9E';
-const HR_CHAR_UUID    = '6E400008-B5A3-F393-E0A9-E50E24DCCA9E'; // Dedicated HR notify (1-byte uint8)
 
-// Write-only characteristics (Phone → ESP32)
+// Write-only characteristics exported for use by other screens
 export const SONG_CHAR_UUID         = '6E400005-B5A3-F393-E0A9-E50E24DCCA9E';
 export const ARTIST_CHAR_UUID       = '6E400006-B5A3-F393-E0A9-E50E24DCCA9E';
 export const TIME_CHAR_UUID         = '6E400007-B5A3-F393-E0A9-E50E24DCCA9E';
@@ -25,9 +25,9 @@ export const TRANSIT_LINE_CHAR_UUID = '6E40000A-B5A3-F393-E0A9-E50E24DCCA9E';
 export const TRANSIT_TIME_CHAR_UUID = '6E40000B-B5A3-F393-E0A9-E50E24DCCA9E';
 
 const DEVICE_NAME  = 'Commubu';
-const SCAN_TIMEOUT = 10_000;
+const SCAN_TIMEOUT = 12_000; // ms — give the ESP32 time to be discovered
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 export type BleData = {
   heartRate:      number | null;
   steps:          number | null;
@@ -38,42 +38,39 @@ export type BleData = {
 export type ConnectionStatus = 'disconnected' | 'scanning' | 'connecting' | 'connected';
 
 type BleContextType = {
-  status:          ConnectionStatus;
-  deviceName:      string | null;
-  deviceCustomName:string | null;
-  error:           string | null;
-  data:            BleData;
-  connect:         () => Promise<void>;
-  disconnect:      () => Promise<void>;
-  sendMood:        (mood: string) => Promise<void>;
-  writeChar:       (charUuid: string, value: string) => Promise<void>;
-  clearError:      () => void;
+  status:           ConnectionStatus;
+  deviceName:       string | null;
+  deviceCustomName: string | null;
+  error:            string | null;
+  data:             BleData;
+  nativeBleAvailable: boolean;
+  connect:          () => Promise<void>;
+  disconnect:       () => Promise<void>;
+  sendMood:         (mood: string) => Promise<void>;
+  writeChar:        (charUuid: string, value: string) => Promise<void>;
+  clearError:       () => void;
 };
 
-// ─── Parsers for ESP32 plain-text frames ─────────────────────────────────────
+const EMPTY_DATA: BleData = {
+  heartRate: null, steps: null, batteryPercent: null, batteryVoltage: null,
+};
 
-/**
- * TX char sends several message formats. We handle:
- *
- *   "Step! count=123"
- *      → steps = 123
- *
- *   "BPM=72 Batt=85% V=3.94"
- *      → batteryPercent = 85, batteryVoltage = 3.94
- *      (BPM here is redundant — we use the dedicated HR char instead)
- *
- *   "echo: ..."  /  "Wake: ..."  /  "UI: ..."  → informational, ignored
- */
+// ─── TX frame parsers ─────────────────────────────────────────────────────────
+// The ESP32 sends plain text on the TX characteristic, not JSON.
+//
+// Formats:
+//   "Step! count=47"           → steps
+//   "BPM=72 Batt=85% V=3.94"  → batteryPercent, batteryVoltage
+//   "echo: ..." / "UI: ..." / "Wake: ..." → informational, ignored
+//
 function parseTxFrame(raw: string): Partial<BleData> {
   const update: Partial<BleData> = {};
 
-  // "Step! count=123"
   const stepMatch = raw.match(/count=(\d+)/i);
   if (stepMatch) {
     update.steps = parseInt(stepMatch[1], 10);
   }
 
-  // "BPM=72 Batt=85% V=3.94"
   const battPctMatch = raw.match(/Batt=(\d+)%/i);
   if (battPctMatch) {
     update.batteryPercent = parseInt(battPctMatch[1], 10);
@@ -87,10 +84,7 @@ function parseTxFrame(raw: string): Partial<BleData> {
   return update;
 }
 
-/**
- * HR char sends a single raw uint8 byte (BPM).
- * base64 → Buffer → byte[0]
- */
+// HR char sends a single uint8 byte (BPM value 0–190)
 function parseHrFrame(base64Value: string): number | null {
   try {
     const byte = Buffer.from(base64Value, 'base64')[0];
@@ -100,78 +94,146 @@ function parseHrFrame(base64Value: string): number | null {
   }
 }
 
-// ─── Context ─────────────────────────────────────────────────────────────────
+// ─── Android BLE permissions (required on Android 12+) ───────────────────────
+async function requestAndroidBlePermissions(): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+
+  // Android 12+ needs BLUETOOTH_SCAN + BLUETOOTH_CONNECT
+  if (Platform.Version >= 31) {
+    const results = await PermissionsAndroid.requestMultiple([
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+    ]);
+    const allGranted = Object.values(results).every(
+      r => r === PermissionsAndroid.RESULTS.GRANTED
+    );
+    if (!allGranted) {
+      console.warn('[BLE] Android 12+ permissions denied:', results);
+    }
+    return allGranted;
+  }
+
+  // Android 6–11 needs location for BLE scanning
+  const result = await PermissionsAndroid.request(
+    PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+  );
+  return result === PermissionsAndroid.RESULTS.GRANTED;
+}
+
+// ─── Context ──────────────────────────────────────────────────────────────────
 const BleContext = createContext<BleContextType>({
-  status:          'disconnected',
-  deviceName:      null,
-  deviceCustomName:null,
-  error:           null,
-  data:            { heartRate: null, steps: null, batteryPercent: null, batteryVoltage: null },
-  connect:         async () => {},
-  disconnect:      async () => {},
-  sendMood:        async () => {},
-  writeChar:       async () => {},
-  clearError:      () => {},
+  status:             'disconnected',
+  deviceName:         null,
+  deviceCustomName:   null,
+  error:              null,
+  data:               EMPTY_DATA,
+  nativeBleAvailable: false,
+  connect:            async () => {},
+  disconnect:         async () => {},
+  sendMood:           async () => {},
+  writeChar:          async () => {},
+  clearError:         () => {},
 });
 
 export function useBle() {
   return useContext(BleContext);
 }
 
-// ─── Provider ────────────────────────────────────────────────────────────────
+// ─── Provider ─────────────────────────────────────────────────────────────────
 export function BleProvider({ children }: { children: React.ReactNode }) {
-  const managerRef      = useRef<BleManager | null>(null);
-  const deviceRef       = useRef<Device | null>(null);
-  const txSubRef        = useRef<Subscription | null>(null);
-  const hrSubRef        = useRef<Subscription | null>(null);
-  const disconnectSub   = useRef<Subscription | null>(null);
+  const managerRef       = useRef<BleManager | null>(null);
+  const deviceRef        = useRef<Device | null>(null);
+  const txSubRef         = useRef<Subscription | null>(null);
+  const hrSubRef         = useRef<Subscription | null>(null);
+  const disconnectSubRef = useRef<Subscription | null>(null);
 
-  const [status,          setStatus]          = useState<ConnectionStatus>('disconnected');
-  const [deviceName,      setDeviceName]      = useState<string | null>(null);
-  const [deviceCustomName,setDeviceCustomName]= useState<string | null>(null);
-  const [error,           setError]           = useState<string | null>(null);
-  const [data,            setData]            = useState<BleData>({
-    heartRate: null, steps: null, batteryPercent: null, batteryVoltage: null,
-  });
+  const [status,            setStatus]            = useState<ConnectionStatus>('disconnected');
+  const [deviceName,        setDeviceName]        = useState<string | null>(null);
+  const [deviceCustomName,  setDeviceCustomName]  = useState<string | null>(null);
+  const [error,             setError]             = useState<string | null>(null);
+  const [data,              setData]              = useState<BleData>(EMPTY_DATA);
+  const [nativeBleAvailable, setNativeBleAvailable] = useState(false);
 
-  // Init BleManager once
+  // ── Init BleManager once ────────────────────────────────────────────────────
   useEffect(() => {
-    if (!NativeModules.BleClientManager) {
-      console.log('[BLE] Native module not available (Expo Go / web)');
+    const nativeAvailable = !!NativeModules.BleClientManager;
+    setNativeBleAvailable(nativeAvailable);
+
+    if (!nativeAvailable) {
+      console.log('[BLE] Native module not available — run: npx expo run:android');
       return;
     }
-    managerRef.current = new BleManager();
+
+    const manager = new BleManager();
+    managerRef.current = manager;
+
+    // Log BLE adapter state changes
+    const stateSub = manager.onStateChange((state) => {
+      console.log('[BLE] Adapter state:', state);
+      if (state === State.PoweredOff) {
+        setError('Bluetooth is turned off. Please enable it.');
+      }
+    }, true);
+
     return () => {
+      stateSub.remove();
       cleanupSubs();
-      managerRef.current?.destroy();
+      manager.destroy();
     };
   }, []);
 
   function cleanupSubs() {
-    txSubRef.current?.remove();      txSubRef.current = null;
-    hrSubRef.current?.remove();      hrSubRef.current = null;
-    disconnectSub.current?.remove(); disconnectSub.current = null;
+    txSubRef.current?.remove();         txSubRef.current = null;
+    hrSubRef.current?.remove();         hrSubRef.current = null;
+    disconnectSubRef.current?.remove(); disconnectSubRef.current = null;
     deviceRef.current = null;
   }
 
-  // ── Connect ────────────────────────────────────────────────────────────────
+  // ── Connect ─────────────────────────────────────────────────────────────────
   const connect = useCallback(async () => {
     const manager = managerRef.current;
-    if (!manager || status === 'connected' || status === 'scanning') return;
+
+    if (!manager) {
+      setError('BLE not available. Run: npx expo run:android (not Expo Go)');
+      return;
+    }
+    if (status === 'connected' || status === 'scanning' || status === 'connecting') return;
 
     setError(null);
+
+    // 1. Request Android permissions first
+    const permOk = await requestAndroidBlePermissions();
+    if (!permOk) {
+      setError('Bluetooth permissions denied. Please grant them in Settings.');
+      return;
+    }
+
+    // 2. Check BT is on
+    const bleState = await manager.state();
+    if (bleState !== State.PoweredOn) {
+      setError('Please turn on Bluetooth and try again.');
+      return;
+    }
+
     setStatus('scanning');
+    console.log('[BLE] Scanning for', DEVICE_NAME, '...');
 
     try {
-      // 1. Scan for device by service UUID
+      // 3. Scan for device by service UUID
       const found = await new Promise<Device>((resolve, reject) => {
         const timer = setTimeout(() => {
           manager.stopDeviceScan();
-          reject(new Error(`"${DEVICE_NAME}" not found — is it powered on and nearby?`));
+          reject(new Error(
+            `"${DEVICE_NAME}" not found after ${SCAN_TIMEOUT / 1000}s.\n` +
+            `• Is the ESP32 powered on?\n` +
+            `• Is it within ~5 metres?\n` +
+            `• Is another device already connected to it?`
+          ));
         }, SCAN_TIMEOUT);
 
         manager.startDeviceScan(
-          null,   // scan all — 128-bit UUID filter is unreliable on Android
+          [SERVICE_UUID],
           { allowDuplicates: false },
           (err, dev) => {
             if (err) {
@@ -183,6 +245,7 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
             if (dev?.name === DEVICE_NAME || dev?.localName === DEVICE_NAME) {
               clearTimeout(timer);
               manager.stopDeviceScan();
+              console.log('[BLE] Found device:', dev.name, dev.id);
               resolve(dev);
             }
           }
@@ -191,19 +254,31 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
 
       setStatus('connecting');
 
-      // 2. Connect + discover services/characteristics
-      const connected = await found.connect({ autoConnect: false });
+      // 4. Connect with MTU negotiation for reliability
+      const connected = await found.connect({
+        autoConnect: false,
+        requestMTU:  512,
+      });
+      console.log('[BLE] Connected, discovering services...');
+
       await connected.discoverAllServicesAndCharacteristics();
       deviceRef.current = connected;
+      console.log('[BLE] Services discovered');
 
-      // 3. Subscribe to TX characteristic — parses step counts + battery strings
+      // 5. Subscribe to TX characteristic (plain-text frames: steps + battery)
       txSubRef.current = connected.monitorCharacteristicForService(
         SERVICE_UUID,
         TX_CHAR_UUID,
         (err, char) => {
-          if (err || !char?.value) return;
+          if (err) {
+            console.warn('[BLE TX error]', err.message);
+            return;
+          }
+          if (!char?.value) return;
+
           const raw = Buffer.from(char.value, 'base64').toString('utf8').trim();
           console.log('[BLE TX]', raw);
+
           const update = parseTxFrame(raw);
           if (Object.keys(update).length > 0) {
             setData(prev => ({ ...prev, ...update }));
@@ -211,56 +286,64 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         }
       );
 
-      // 4. Subscribe to HR characteristic — 1-byte uint8 BPM, notified every ~1s
+      // 6. Subscribe to HR characteristic (single uint8 byte, notified every ~1s)
       hrSubRef.current = connected.monitorCharacteristicForService(
         SERVICE_UUID,
         HR_CHAR_UUID,
         (err, char) => {
-          if (err || !char?.value) return;
-          const bpm = parseHrFrame(char.value);
-          if (bpm !== null) {
-            setData(prev => ({ ...prev, heartRate: bpm }));
+          if (err) {
+            console.warn('[BLE HR error]', err.message);
+            return;
           }
+          if (!char?.value) return;
+
+          const bpm = parseHrFrame(char.value);
+          console.log('[BLE HR] raw byte →', bpm, 'bpm');
+          setData(prev => ({ ...prev, heartRate: bpm }));
         }
       );
 
-      // 5. Watch for unexpected disconnect
-      disconnectSub.current = connected.onDisconnected(() => {
-        console.log('[BLE] Disconnected unexpectedly');
+      // 7. Handle unexpected disconnects
+      disconnectSubRef.current = connected.onDisconnected((err) => {
+        console.log('[BLE] Disconnected', err?.message ?? '');
         cleanupSubs();
         setStatus('disconnected');
         setDeviceName(null);
         setDeviceCustomName(null);
-        setData({ heartRate: null, steps: null, batteryPercent: null, batteryVoltage: null });
+        setData(EMPTY_DATA);
       });
 
-      // 6. Read custom display name from device
+      // 8. Read the custom display name (non-critical)
       try {
         const char = await connected.readCharacteristicForService(
-          SERVICE_UUID,
-          NAME_CHAR_UUID
+          SERVICE_UUID, NAME_CHAR_UUID
         );
         if (char?.value) {
-          setDeviceCustomName(Buffer.from(char.value, 'base64').toString('utf8').trim());
+          const name = Buffer.from(char.value, 'base64').toString('utf8').trim();
+          setDeviceCustomName(name);
+          console.log('[BLE] Device name:', name);
         }
       } catch {
-        // Non-critical — device name falls back to DEVICE_NAME
+        // ignore — name char is optional
       }
 
       setStatus('connected');
       setDeviceName(connected.name ?? DEVICE_NAME);
+      console.log('[BLE] Fully connected and subscribed ✓');
+
     } catch (e: any) {
+      console.error('[BLE] Connection failed:', e.message);
       cleanupSubs();
       setStatus('disconnected');
       setError(e.message ?? String(e));
     }
   }, [status]);
 
-  // ── Disconnect ─────────────────────────────────────────────────────────────
+  // ── Disconnect ──────────────────────────────────────────────────────────────
   const disconnect = useCallback(async () => {
-    txSubRef.current?.remove();      txSubRef.current = null;
-    hrSubRef.current?.remove();      hrSubRef.current = null;
-    disconnectSub.current?.remove(); disconnectSub.current = null;
+    txSubRef.current?.remove();         txSubRef.current = null;
+    hrSubRef.current?.remove();         hrSubRef.current = null;
+    disconnectSubRef.current?.remove(); disconnectSubRef.current = null;
 
     if (deviceRef.current) {
       await deviceRef.current.cancelConnection().catch(() => {});
@@ -270,31 +353,32 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     setStatus('disconnected');
     setDeviceName(null);
     setDeviceCustomName(null);
-    setData({ heartRate: null, steps: null, batteryPercent: null, batteryVoltage: null });
+    setData(EMPTY_DATA);
+    console.log('[BLE] Disconnected by user');
   }, []);
 
-  // ── Generic write helper ───────────────────────────────────────────────────
-  // Use this to push song, artist, time, transit line/time to the device.
-  // e.g. writeChar(SONG_CHAR_UUID, 'Let It Happen')
+  // ── Generic write (for pushing data TO the ESP32) ───────────────────────────
+  // Usage: writeChar(SONG_CHAR_UUID, 'Let It Happen')
+  //        writeChar(TIME_CHAR_UUID, '14:35')
   const writeChar = useCallback(async (charUuid: string, value: string) => {
     const device = deviceRef.current;
     if (!device) {
-      setError('Not connected — tap the BLE button to connect first.');
+      setError('Not connected — connect the device first.');
       return;
     }
     try {
       const encoded = Buffer.from(value, 'utf8').toString('base64');
       await device.writeCharacteristicWithResponseForService(
-        SERVICE_UUID,
-        charUuid,
-        encoded
+        SERVICE_UUID, charUuid, encoded
       );
+      console.log('[BLE] Wrote to', charUuid, ':', value);
     } catch (e: any) {
+      console.error('[BLE] Write failed:', e.message);
       setError(e.message ?? String(e));
     }
   }, []);
 
-  // ── Send Mood (writes to RX char as plain text) ────────────────────────────
+  // ── Send mood (writes plain text to RX char) ─────────────────────────────
   const sendMood = useCallback(async (mood: string) => {
     await writeChar(RX_CHAR_UUID, mood + '\n');
   }, [writeChar]);
@@ -302,20 +386,19 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   const clearError = useCallback(() => setError(null), []);
 
   return (
-    <BleContext.Provider
-      value={{
-        status,
-        deviceName,
-        deviceCustomName,
-        error,
-        data,
-        connect,
-        disconnect,
-        sendMood,
-        writeChar,
-        clearError,
-      }}
-    >
+    <BleContext.Provider value={{
+      status,
+      deviceName,
+      deviceCustomName,
+      error,
+      data,
+      nativeBleAvailable,
+      connect,
+      disconnect,
+      sendMood,
+      writeChar,
+      clearError,
+    }}>
       {children}
     </BleContext.Provider>
   );
