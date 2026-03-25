@@ -14,7 +14,7 @@ async function spotifyFetch(path: string, token: string, options?: RequestInit) 
     console.error(`Spotify ${path} failed ${res.status}:`, body);
     throw new Error(`${res.status}`);
   }
-  if (res.status === 204) return {};
+  if (res.status === 204) return null;
   return res.json();
 }
 
@@ -35,6 +35,45 @@ export async function getUserProfile(token: string): Promise<{ id: string; displ
   return spotifyFetch('/me', token);
 }
 
+// ─── Now Playing ─────────────────────────────────────────────────────────────
+
+export type NowPlaying = {
+  isPlaying:   boolean;
+  songTitle:   string;
+  artistName:  string;
+  albumArt:    string | null;
+  progressMs:  number;
+  durationMs:  number;
+  trackUri:    string;
+  trackId:     string;
+};
+
+/**
+ * Fetches the currently playing track from Spotify.
+ * Returns null if nothing is playing or the user has no active device.
+ * Requires the `user-read-currently-playing` scope.
+ */
+export async function getNowPlaying(token: string): Promise<NowPlaying | null> {
+  try {
+    const data = await spotifyFetch('/me/player/currently-playing', token);
+    if (!data || !data.item) return null;
+
+    const track = data.item;
+    return {
+      isPlaying:  data.is_playing ?? false,
+      songTitle:  track.name ?? '',
+      artistName: (track.artists ?? []).map((a: any) => a.name).join(', '),
+      albumArt:   track.album?.images?.[0]?.url ?? null,
+      progressMs: data.progress_ms ?? 0,
+      durationMs: track.duration_ms ?? 0,
+      trackUri:   track.uri ?? '',
+      trackId:    track.id ?? '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type SpotifyTrack = {
@@ -50,7 +89,6 @@ type TopArtist = { id: string; name: string; genres: string[] };
 type TopTrack  = { id: string; name: string; artists: { name: string }[]; album: { name: string; images: { url: string }[] }; uri: string };
 
 // ─── Module-level cache for top artists/tracks ────────────────────────────────
-// Fetched once per token — avoids re-fetching on every mood prediction call.
 let cachedToken:   string | null = null;
 let cachedArtists: TopArtist[]   = [];
 let cachedTracks:  TopTrack[]    = [];
@@ -81,7 +119,6 @@ const MOOD_SUFFIX: Record<string, string> = {
   sleepy:  'slow ambient gentle',
 };
 
-// Only 2 fallback queries per mood — was 3, causing 429s with nothing to show
 const MOOD_FALLBACK: Record<string, string[]> = {
   happy:   ['happy pop upbeat', 'feel good dance'],
   neutral: ['indie chill lo-fi', 'pop mellow easy'],
@@ -92,9 +129,8 @@ const MOOD_FALLBACK: Record<string, string[]> = {
 };
 
 // ─── Recommendation cache ─────────────────────────────────────────────────────
-// Caches the result per mood so repeated calls (e.g. from re-renders) are free.
 const recCache = new Map<string, { tracks: SpotifyTrack[]; personalized: boolean; ts: number }>();
-const REC_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const REC_CACHE_TTL_MS = 10 * 60 * 1000;
 
 // ─── Taste-aware mood recommendations ────────────────────────────────────────
 
@@ -104,7 +140,6 @@ export async function getMoodRecommendations(
   limit = 20,
 ): Promise<{ tracks: SpotifyTrack[]; personalized: boolean }> {
 
-  // Return cached result if fresh
   const cacheKey = `${token.slice(-8)}_${mood}_${limit}`;
   const cached   = recCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < REC_CACHE_TTL_MS) {
@@ -113,7 +148,7 @@ export async function getMoodRecommendations(
   }
 
   const suffix = MOOD_SUFFIX[mood] ?? '';
-  const { artists: topArtists, tracks: topTracksItems } = await getCachedUserTaste(token);
+  const { artists: topArtists } = await getCachedUserTaste(token);
 
   const seen   = new Set<string>();
   const tracks: SpotifyTrack[] = [];
@@ -130,39 +165,29 @@ export async function getMoodRecommendations(
   const personalized = topArtists.length > 0;
 
   if (personalized) {
-    // Pick 2 artists + 1 genre query — max 3 search calls when personalized
-    const pickedArtists = [...topArtists]
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 2);
-
-    const allGenres    = topArtists.flatMap(a => a.genres ?? []);
-    const uniqueGenres = [...new Set(allGenres)];
-    const pickedGenre  = uniqueGenres[Math.floor(Math.random() * uniqueGenres.length)];
+    const pickedArtists = [...topArtists].sort(() => Math.random() - 0.5).slice(0, 2);
+    const allGenres     = topArtists.flatMap(a => a.genres ?? []);
+    const uniqueGenres  = [...new Set(allGenres)];
+    const pickedGenre   = uniqueGenres[Math.floor(Math.random() * uniqueGenres.length)];
 
     const queries = [
       ...pickedArtists.map(a => `artist:"${a.name}" ${suffix}`),
       ...(pickedGenre ? [`genre:"${pickedGenre}" ${suffix}`] : []),
     ];
-
     const perQuery = Math.ceil(limit / queries.length) + 2;
 
-    // Sequential with small gap to avoid burst 429s
     for (const q of queries) {
       if (tracks.length >= limit) break;
       try {
         const res = await searchTracks(token, q, perQuery);
         addTracks(res?.tracks?.items ?? []);
       } catch (e: any) {
-        if (e?.message?.includes('429')) {
-          console.warn('[Spotify] Rate limited on personalized query — skipping rest');
-          break;
-        }
+        if (e?.message?.includes('429')) { console.warn('[Spotify] Rate limited — skipping rest'); break; }
       }
       if (tracks.length < limit) await delay(200);
     }
   }
 
-  // Fill remaining slots with fallback genre queries (max 2 calls)
   if (tracks.length < limit) {
     const fallbacks = MOOD_FALLBACK[mood] ?? MOOD_FALLBACK['neutral'];
     const needed    = limit - tracks.length;
@@ -174,10 +199,7 @@ export async function getMoodRecommendations(
         const res = await searchTracks(token, q, perQuery);
         addTracks(res?.tracks?.items ?? []);
       } catch (e: any) {
-        if (e?.message?.includes('429')) {
-          console.warn('[Spotify] Rate limited on fallback query — stopping');
-          break;
-        }
+        if (e?.message?.includes('429')) { console.warn('[Spotify] Rate limited — stopping'); break; }
       }
       if (tracks.length < limit) await delay(200);
     }
@@ -200,25 +222,19 @@ export function openTrackInSpotify(track: SpotifyTrack) {
 
 export async function addToQueue(token: string, trackUri: string): Promise<boolean> {
   try {
-    await spotifyFetch(`/me/player/queue?uri=${encodeURIComponent(trackUri)}`, token, {
-      method: 'POST',
-    });
+    await spotifyFetch(`/me/player/queue?uri=${encodeURIComponent(trackUri)}`, token, { method: 'POST' });
     return true;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
 export async function queueAllTracks(
   token: string,
   tracks: SpotifyTrack[],
 ): Promise<{ queued: number; failed: number }> {
-  let queued = 0;
-  let failed = 0;
+  let queued = 0, failed = 0;
   for (const track of tracks) {
     const success = await addToQueue(token, track.uri);
-    if (success) queued++;
-    else failed++;
+    if (success) queued++; else failed++;
     await delay(150);
   }
   return { queued, failed };
