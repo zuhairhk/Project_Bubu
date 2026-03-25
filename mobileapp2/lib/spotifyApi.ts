@@ -12,7 +12,7 @@ async function spotifyFetch(path: string, token: string, options?: RequestInit) 
   if (!res.ok) {
     const body = await res.text();
     console.error(`Spotify ${path} failed ${res.status}:`, body);
-    throw new Error(`Spotify ${path} failed: ${res.status}`);
+    throw new Error(`${res.status}`);
   }
   if (res.status === 204) return {};
   return res.json();
@@ -49,9 +49,30 @@ export type SpotifyTrack = {
 type TopArtist = { id: string; name: string; genres: string[] };
 type TopTrack  = { id: string; name: string; artists: { name: string }[]; album: { name: string; images: { url: string }[] }; uri: string };
 
-// ─── Mood search queries ──────────────────────────────────────────────────────
+// ─── Module-level cache for top artists/tracks ────────────────────────────────
+// Fetched once per token — avoids re-fetching on every mood prediction call.
+let cachedToken:   string | null = null;
+let cachedArtists: TopArtist[]   = [];
+let cachedTracks:  TopTrack[]    = [];
 
-const MOOD_QUERY_SUFFIX: Record<string, string> = {
+async function getCachedUserTaste(token: string): Promise<{ artists: TopArtist[]; tracks: TopTrack[] }> {
+  if (token === cachedToken && cachedArtists.length > 0) {
+    return { artists: cachedArtists, tracks: cachedTracks };
+  }
+  try {
+    const [ar, tr] = await Promise.all([getTopArtists(token), getTopTracks(token)]);
+    cachedToken   = token;
+    cachedArtists = ar.items ?? [];
+    cachedTracks  = tr.items ?? [];
+  } catch {
+    // Fall through — returns empty arrays, triggers genre fallback
+  }
+  return { artists: cachedArtists, tracks: cachedTracks };
+}
+
+// ─── Mood search config ───────────────────────────────────────────────────────
+
+const MOOD_SUFFIX: Record<string, string> = {
   happy:   'upbeat feel good',
   neutral: 'chill easy',
   stressed:'calm relaxing acoustic',
@@ -60,14 +81,20 @@ const MOOD_QUERY_SUFFIX: Record<string, string> = {
   sleepy:  'slow ambient gentle',
 };
 
-const MOOD_GENRE_FALLBACK: Record<string, string[]> = {
-  happy:   ['genre:pop upbeat', 'genre:dance feel good', 'happy hits'],
-  neutral: ['genre:indie chill', 'lo-fi easy listening', 'genre:pop mellow'],
-  stressed:['genre:ambient calm', 'acoustic peaceful', 'piano relax'],
-  angry:   ['genre:soul soothing', 'acoustic calm', 'genre:folk gentle'],
-  sad:     ['genre:indie sad', 'emotional ballads', 'genre:singer-songwriter melancholy'],
-  sleepy:  ['genre:ambient sleep', 'gentle piano classical', 'lo-fi sleep'],
+// Only 2 fallback queries per mood — was 3, causing 429s with nothing to show
+const MOOD_FALLBACK: Record<string, string[]> = {
+  happy:   ['happy pop upbeat', 'feel good dance'],
+  neutral: ['indie chill lo-fi', 'pop mellow easy'],
+  stressed:['acoustic peaceful calm', 'piano relax ambient'],
+  angry:   ['soul soothing calm', 'folk gentle acoustic'],
+  sad:     ['indie sad emotional', 'singer-songwriter melancholy'],
+  sleepy:  ['ambient sleep gentle', 'lo-fi piano slow'],
 };
+
+// ─── Recommendation cache ─────────────────────────────────────────────────────
+// Caches the result per mood so repeated calls (e.g. from re-renders) are free.
+const recCache = new Map<string, { tracks: SpotifyTrack[]; personalized: boolean; ts: number }>();
+const REC_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 // ─── Taste-aware mood recommendations ────────────────────────────────────────
 
@@ -76,18 +103,17 @@ export async function getMoodRecommendations(
   mood: string,
   limit = 20,
 ): Promise<{ tracks: SpotifyTrack[]; personalized: boolean }> {
-  const suffix = MOOD_QUERY_SUFFIX[mood] ?? '';
 
-  let topArtists: TopArtist[] = [];
-  let topTracksItems: TopTrack[] = [];
-
-  try {
-    const [ar, tr] = await Promise.all([getTopArtists(token), getTopTracks(token)]);
-    topArtists     = ar.items ?? [];
-    topTracksItems = tr.items ?? [];
-  } catch {
-    // fall through to genre fallback
+  // Return cached result if fresh
+  const cacheKey = `${token.slice(-8)}_${mood}_${limit}`;
+  const cached   = recCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < REC_CACHE_TTL_MS) {
+    console.log('[Spotify] Using cached recs for', mood);
+    return { tracks: cached.tracks, personalized: cached.personalized };
   }
+
+  const suffix = MOOD_SUFFIX[mood] ?? '';
+  const { artists: topArtists, tracks: topTracksItems } = await getCachedUserTaste(token);
 
   const seen   = new Set<string>();
   const tracks: SpotifyTrack[] = [];
@@ -101,61 +127,77 @@ export async function getMoodRecommendations(
     }
   };
 
-  const personalized = topArtists.length > 0 || topTracksItems.length > 0;
+  const personalized = topArtists.length > 0;
 
   if (personalized) {
-    const shuffledArtists = [...topArtists].sort(() => Math.random() - 0.5).slice(0, 3);
-    const artistQueries   = shuffledArtists.map(a => `artist:"${a.name}" ${suffix}`);
+    // Pick 2 artists + 1 genre query — max 3 search calls when personalized
+    const pickedArtists = [...topArtists]
+      .sort(() => Math.random() - 0.5)
+      .slice(0, 2);
 
     const allGenres    = topArtists.flatMap(a => a.genres ?? []);
-    const uniqueGenres = [...new Set(allGenres)].slice(0, 4);
-    const genreQueries = uniqueGenres.map(g => `genre:"${g}" ${suffix}`);
+    const uniqueGenres = [...new Set(allGenres)];
+    const pickedGenre  = uniqueGenres[Math.floor(Math.random() * uniqueGenres.length)];
 
-    const shuffledTracks = [...topTracksItems].sort(() => Math.random() - 0.5).slice(0, 2);
-    const trackQueries   = shuffledTracks.map(t => `"${t.artists[0]?.name ?? ''}" ${suffix}`);
+    const queries = [
+      ...pickedArtists.map(a => `artist:"${a.name}" ${suffix}`),
+      ...(pickedGenre ? [`genre:"${pickedGenre}" ${suffix}`] : []),
+    ];
 
-    const allQueries = [...artistQueries, ...genreQueries, ...trackQueries];
-    const perQuery   = Math.ceil(limit / allQueries.length) + 2;
+    const perQuery = Math.ceil(limit / queries.length) + 2;
 
-    const results = await Promise.allSettled(
-      allQueries.map(q => searchTracks(token, q, perQuery)),
-    );
-
-    for (const r of results) {
-      if (r.status === 'fulfilled') addTracks(r.value?.tracks?.items ?? []);
+    // Sequential with small gap to avoid burst 429s
+    for (const q of queries) {
       if (tracks.length >= limit) break;
+      try {
+        const res = await searchTracks(token, q, perQuery);
+        addTracks(res?.tracks?.items ?? []);
+      } catch (e: any) {
+        if (e?.message?.includes('429')) {
+          console.warn('[Spotify] Rate limited on personalized query — skipping rest');
+          break;
+        }
+      }
+      if (tracks.length < limit) await delay(200);
     }
   }
 
+  // Fill remaining slots with fallback genre queries (max 2 calls)
   if (tracks.length < limit) {
-    const fallbackQueries = MOOD_GENRE_FALLBACK[mood] ?? MOOD_GENRE_FALLBACK['neutral'];
-    const needed   = limit - tracks.length;
-    const perQuery = Math.ceil(needed / fallbackQueries.length) + 2;
+    const fallbacks = MOOD_FALLBACK[mood] ?? MOOD_FALLBACK['neutral'];
+    const needed    = limit - tracks.length;
+    const perQuery  = Math.ceil(needed / fallbacks.length) + 2;
 
-    const results = await Promise.allSettled(
-      fallbackQueries.map(q => searchTracks(token, q, perQuery)),
-    );
-
-    for (const r of results) {
-      if (r.status === 'fulfilled') addTracks(r.value?.tracks?.items ?? []);
+    for (const q of fallbacks) {
       if (tracks.length >= limit) break;
+      try {
+        const res = await searchTracks(token, q, perQuery);
+        addTracks(res?.tracks?.items ?? []);
+      } catch (e: any) {
+        if (e?.message?.includes('429')) {
+          console.warn('[Spotify] Rate limited on fallback query — stopping');
+          break;
+        }
+      }
+      if (tracks.length < limit) await delay(200);
     }
   }
 
-  return { tracks, personalized };
+  const result = { tracks, personalized };
+  recCache.set(cacheKey, { ...result, ts: Date.now() });
+  return result;
+}
+
+function delay(ms: number) {
+  return new Promise<void>(r => setTimeout(r, ms));
 }
 
 // ─── Playback ─────────────────────────────────────────────────────────────────
 
-// Opens a single track in the Spotify app via deep link
 export function openTrackInSpotify(track: SpotifyTrack) {
-  const spotifyUri = track.uri; // e.g. spotify:track:4iV5W9uYEdYUVa79Axb7Rh
-  const fallbackUrl = track.external_urls.spotify;
-  // Try Spotify app deep link first, fall back to web URL
-  return { spotifyUri, fallbackUrl };
+  return { spotifyUri: track.uri, fallbackUrl: track.external_urls.spotify };
 }
 
-// Add a single track to Spotify queue (requires user-modify-playback-state scope)
 export async function addToQueue(token: string, trackUri: string): Promise<boolean> {
   try {
     await spotifyFetch(`/me/player/queue?uri=${encodeURIComponent(trackUri)}`, token, {
@@ -167,22 +209,17 @@ export async function addToQueue(token: string, trackUri: string): Promise<boole
   }
 }
 
-// Queue all tracks and open Spotify — best effort, gracefully handles failures
 export async function queueAllTracks(
   token: string,
   tracks: SpotifyTrack[],
 ): Promise<{ queued: number; failed: number }> {
   let queued = 0;
   let failed = 0;
-
-  // Queue tracks sequentially with small delay to avoid rate limiting
   for (const track of tracks) {
     const success = await addToQueue(token, track.uri);
     if (success) queued++;
     else failed++;
-    // Small delay between queue calls
-    await new Promise(r => setTimeout(r, 150));
+    await delay(150);
   }
-
   return { queued, failed };
 }

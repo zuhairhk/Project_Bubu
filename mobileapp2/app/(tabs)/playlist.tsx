@@ -26,45 +26,41 @@ import {
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
-  bg:       '#F2F2F7',
-  card:     '#FFFFFF',
-  text:     '#000000',
-  textSec:  '#3C3C43',
-  textTert: '#8E8E93',
-  sep:      '#C6C6C8',
-  blue:     '#007AFF',
-  green:    '#34C759',
-  orange:   '#FF9500',
-  red:      '#FF3B30',
-  spotify:  '#1DB954',
+  bg: '#F2F2F7', card: '#FFFFFF', text: '#000000', textSec: '#3C3C43',
+  textTert: '#8E8E93', sep: '#C6C6C8', blue: '#007AFF', green: '#34C759',
+  orange: '#FF9500', red: '#FF3B30', spotify: '#1DB954',
 };
-
 const cardShadow = {
-  shadowColor:   '#000',
-  shadowOpacity: 0.06,
-  shadowRadius:  12,
-  shadowOffset:  { width: 0, height: 2 },
-  elevation:     3,
+  shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12,
+  shadowOffset: { width: 0, height: 2 }, elevation: 3,
 };
-
 const MOOD_COLOR: Record<string, string> = {
   happy: '#FF9500', neutral: '#007AFF', stressed: '#FF3B30',
-  angry: '#FF3B30', sad: '#5856D6',    sleepy: '#AF52DE',
+  angry: '#FF3B30', sad: '#5856D6', sleepy: '#AF52DE',
 };
 const MOOD_LABEL: Record<string, string> = {
   happy: 'Happy', neutral: 'Neutral', stressed: 'Stressed',
-  angry: 'Angry', sad: 'Sad',        sleepy: 'Sleepy',
+  angry: 'Angry', sad: 'Sad', sleepy: 'Sleepy',
 };
 
-const BACKEND_URL  = 'https://ffed-141-117-117-125.ngrok-free.app';
-const PREDICT_URL  = `${BACKEND_URL}/api/ml/predict`;
-const PREDICT_MS   = 60_000;
+// ── Predict URL — update this when your ngrok URL changes ──────────────────
+// Replace with your current ngrok URL or a stable backend URL
+const BACKEND_URL = 'https://ffed-141-117-117-125.ngrok-free.app';
+const PREDICT_URL = `${BACKEND_URL}/api/ml/predict`;
+
+// ── How often to re-predict mood (ms). 5 min is plenty — avoids 429s. ──────
+const PREDICT_MS = 5 * 60 * 1000;
 
 const MOOD_LABELS = ['happy', 'neutral', 'stressed', 'angry', 'sad', 'sleepy'] as const;
 type Mood = typeof MOOD_LABELS[number];
 
 type Artist = { id: string; name: string; genres: string[]; images: { url: string }[] };
-type Track  = { id: string; uri: string; name: string; artists: { name: string }[]; album: { name: string; images: { url: string }[] }; external_urls: { spotify: string } };
+type Track = {
+  id: string; uri: string; name: string;
+  artists: { name: string }[];
+  album: { name: string; images: { url: string }[] };
+  external_urls: { spotify: string };
+};
 
 // ─── Artist row ───────────────────────────────────────────────────────────────
 function ArtistRow({ artist, index }: { artist: Artist; index: number }) {
@@ -111,13 +107,13 @@ function TrackRow({ track, index, onPress }: { track: Track; index: number; onPr
 }
 
 const R = StyleSheet.create({
-  row:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
-  rank:        { width: 28, fontSize: 12, color: C.textTert, fontWeight: '600' },
-  thumb:       { width: 46, height: 46, borderRadius: 8, marginRight: 12 },
-  thumbFallback:{ alignItems: 'center', justifyContent: 'center', backgroundColor: C.bg },
-  meta:        { flex: 1 },
-  primary:     { fontSize: 14, fontWeight: '600', color: C.text, marginBottom: 2 },
-  secondary:   { fontSize: 12, color: C.textTert },
+  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
+  rank: { width: 28, fontSize: 12, color: C.textTert, fontWeight: '600' },
+  thumb: { width: 46, height: 46, borderRadius: 8, marginRight: 12 },
+  thumbFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: C.bg },
+  meta: { flex: 1 },
+  primary: { fontSize: 14, fontWeight: '600', color: C.text, marginBottom: 2 },
+  secondary: { fontSize: 12, color: C.textTert },
 });
 
 // ─── Mood chip ────────────────────────────────────────────────────────────────
@@ -134,7 +130,6 @@ function MoodChip({ mood, active, onPress }: { mood: Mood; active: boolean; onPr
     </Pressable>
   );
 }
-
 const MC = StyleSheet.create({
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: C.bg, borderWidth: 1, borderColor: C.sep },
   text: { fontSize: 13, color: C.textSec, fontWeight: '500' },
@@ -156,15 +151,19 @@ export default function PlaylistScreen() {
   const [moodSource,     setMoodSource]     = useState<'auto' | 'manual' | null>(null);
   const [predictionConf, setPredictionConf] = useState(0);
   const [predicting,     setPredicting]     = useState(false);
+  const [predictError,   setPredictError]   = useState<string | null>(null);
 
-  const [tab,               setTab]               = useState<'charts' | 'vibes'>('charts');
-  const [recTracks,         setRecTracks]         = useState<Track[]>([]);
-  const [recLoading,        setRecLoading]        = useState(false);
-  const [queuingTracks,     setQueuingTracks]     = useState(false);
+  const [tab,           setTab]           = useState<'charts' | 'vibes'>('charts');
+  const [recTracks,     setRecTracks]     = useState<Track[]>([]);
+  const [recLoading,    setRecLoading]    = useState(false);
+  const [queuingTracks, setQueuingTracks] = useState(false);
 
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Track last mood we fetched recs for — avoids duplicate Spotify calls
+  const lastRecMoodRef  = useRef<Mood | null>(null);
+  const lastRecTokenRef = useRef<string | null>(null);
+  const timerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Spotify auth ──────────────────────────────────────────────────────────
+  // ── Spotify auth ────────────────────────────────────────────────────────────
   useEffect(() => {
     async function handleAuth() {
       if (response?.type !== 'success') return;
@@ -186,60 +185,101 @@ export default function PlaylistScreen() {
     handleAuth();
   }, [response]);
 
-  // ── Recommendations ───────────────────────────────────────────────────────
+  // ── Load recommendations — guarded to only call when mood or token changed ─
   const loadRecs = useCallback(async (tk: string, mood: Mood) => {
+    // Skip if we already have recs for this exact mood+token combo
+    if (lastRecMoodRef.current === mood && lastRecTokenRef.current === tk) return;
+
+    lastRecMoodRef.current  = mood;
+    lastRecTokenRef.current = tk;
+
     setRecLoading(true);
     try {
       const r = await getMoodRecommendations(tk, mood, 20);
       setRecTracks(r.tracks as Track[]);
-    } catch (e) { console.error('Recs error:', e); }
-    finally { setRecLoading(false); }
+    } catch (e) {
+      console.error('Recs error:', e);
+      // Don't clear lastRecMoodRef so we don't immediately retry
+    } finally {
+      setRecLoading(false);
+    }
   }, []);
 
-  // ── Mood prediction ───────────────────────────────────────────────────────
+  // ── Mood prediction — only runs when BLE is connected and HR is available ───
   const predictMood = useCallback(async () => {
     if (bleStatus !== 'connected' || !bleData.heartRate) return;
+
     setPredicting(true);
+    setPredictError(null);
     try {
       const res = await fetch(PREDICT_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': '1',
+        },
         body: JSON.stringify({
           user_id: 'dev_user',
-          heart_rate: bleData.heartRate ?? 70,
+          heart_rate: bleData.heartRate,
           steps_last_minute: bleData.steps ?? 0,
           location_variance: 0.00003,
           timestamp: new Date().toISOString(),
         }),
       });
+
       if (!res.ok) throw new Error(`${res.status}`);
-      const data = await res.json();
-      const mood = data.mood as Mood;
-      setPredictionConf(data.confidence ?? 0);
+
+      const json = await res.json();
+      const mood = json.mood as Mood;
+      setPredictionConf(json.confidence ?? 0);
+
+      // Only update mood if user hasn't manually overridden
       if (moodSource !== 'manual') {
         setActiveMood(mood);
         setGlobalMood(mood);
         setMoodSource('auto');
         if (token) loadRecs(token, mood);
       }
-    } catch (e) { console.error('Predict error:', e); }
-    finally { setPredicting(false); }
-  }, [bleStatus, bleData, moodSource, token, setGlobalMood, loadRecs]);
+    } catch (e: any) {
+      const msg: string = e?.message ?? String(e);
+      // 404 = backend not running / ngrok expired — show once, don't spam
+      if (msg.includes('404')) {
+        setPredictError('Mood server unreachable (404). Update BACKEND_URL in playlist.tsx.');
+      } else if (msg.includes('429')) {
+        setPredictError('Prediction rate limited — will retry later.');
+      } else {
+        console.warn('[Predict]', msg);
+      }
+    } finally {
+      setPredicting(false);
+    }
+  }, [bleStatus, bleData.heartRate, bleData.steps, moodSource, token, setGlobalMood, loadRecs]);
 
+  // ── Start/restart prediction timer when predictMood changes ─────────────────
   useEffect(() => {
+    // Run immediately on mount / when deps change
     predictMood();
+
+    // Then re-run every PREDICT_MS (5 min)
     timerRef.current = setInterval(predictMood, PREDICT_MS);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
   }, [predictMood]);
 
+  // ── Load recs when token becomes available and we already have a mood ────────
   useEffect(() => {
     if (token && activeMood) loadRecs(token, activeMood);
-  }, [token]);
+    // Intentionally only on token change — loadRecs guards duplicate calls
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Manual mood override ─────────────────────────────────────────────────────
   const handleManualMood = useCallback((mood: Mood) => {
     setActiveMood(mood);
     setGlobalMood(mood);
     setMoodSource('manual');
+    // Force recs reload for new manual mood
+    lastRecMoodRef.current = null;
     if (token) loadRecs(token, mood);
   }, [token, setGlobalMood, loadRecs]);
 
@@ -278,7 +318,10 @@ export default function PlaylistScreen() {
             <Text style={S.subtitle}>Mood-powered music</Text>
           </View>
           {token && (
-            <Pressable onPress={() => { setToken(null); setArtists([]); setTopTracks([]); setRecTracks([]); }} style={S.reloginBtn}>
+            <Pressable
+              onPress={() => { setToken(null); setArtists([]); setTopTracks([]); setRecTracks([]); lastRecMoodRef.current = null; }}
+              style={S.reloginBtn}
+            >
               <Ionicons name="refresh-outline" size={14} color={C.blue} />
               <Text style={S.reloginText}>Re-login</Text>
             </Pressable>
@@ -289,20 +332,26 @@ export default function PlaylistScreen() {
         <View style={[S.moodCard, cardShadow]}>
           <View style={S.moodCardLeft}>
             <Text style={S.moodCardMeta}>
-              {moodSource === 'manual' ? 'MANUALLY SET' : bleStatus === 'connected' ? 'DETECTED MOOD' : 'NO DEVICE'}
+              {moodSource === 'manual'
+                ? 'MANUALLY SET'
+                : bleStatus === 'connected' ? 'DETECTED MOOD' : 'NO DEVICE'}
             </Text>
             <Text style={[S.moodCardValue, { color: moodColor }]}>{moodLabel}</Text>
             <Text style={S.moodCardSub}>
               {moodSource === 'auto'
                 ? `${Math.round(predictionConf * 100)}% confidence`
-                : moodSource === 'manual'
-                ? 'Override active'
-                : bleStatus === 'connected' ? 'Waiting for reading...' : 'Connect device or override below'}
+                : moodSource === 'manual' ? 'Override active'
+                : bleStatus === 'connected' ? 'Waiting for reading…'
+                : 'Connect device or override below'}
             </Text>
-            {predicting && (
+            {/* Show prediction error inline — not as console spam */}
+            {predictError && (
+              <Text style={S.predictError}>{predictError}</Text>
+            )}
+            {predicting && !predictError && (
               <View style={S.predictingRow}>
                 <ActivityIndicator size="small" color={C.blue} />
-                <Text style={S.predictingText}>Analysing...</Text>
+                <Text style={S.predictingText}>Analysing…</Text>
               </View>
             )}
           </View>
@@ -367,14 +416,13 @@ export default function PlaylistScreen() {
                     ? <Text style={S.emptyText}>No data yet</Text>
                     : artists.map((a, i) => <ArtistRow key={a.id} artist={a} index={i} />)}
                 </View>
-
                 <Text style={[S.sectionLabel, { marginTop: 20 }]}>TOP TRACKS</Text>
                 <View style={[S.listCard, cardShadow]}>
                   {topTracks.length === 0
                     ? <Text style={S.emptyText}>No data yet</Text>
                     : topTracks.map((t, i) => (
-                        <TrackRow key={t.id} track={t} index={i} onPress={() => handleTrackPress(t)} />
-                      ))}
+                      <TrackRow key={t.id} track={t} index={i} onPress={() => handleTrackPress(t)} />
+                    ))}
                 </View>
               </>
             ) : (
@@ -400,7 +448,7 @@ export default function PlaylistScreen() {
                         ? <ActivityIndicator size="small" color="#fff" />
                         : <Ionicons name="play" size={13} color="#fff" />
                       }
-                      <Text style={S.playAllText}>{queuingTracks ? 'Queuing...' : 'Play All'}</Text>
+                      <Text style={S.playAllText}>{queuingTracks ? 'Queuing…' : 'Play All'}</Text>
                     </Pressable>
                   )}
                 </View>
@@ -420,7 +468,7 @@ export default function PlaylistScreen() {
                   <View style={[S.emptyCard, cardShadow]}>
                     <Ionicons name="musical-notes-outline" size={32} color={C.textTert} />
                     <Text style={S.emptyCardText}>
-                      {activeMood ? 'Loading recommendations...' : 'Select a mood to see recommendations'}
+                      {activeMood ? 'Loading recommendations…' : 'Select a mood to see recommendations'}
                     </Text>
                   </View>
                 )}
@@ -445,14 +493,15 @@ const S = StyleSheet.create({
   reloginBtn:  { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.card, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7, ...cardShadow },
   reloginText: { fontSize: 12, fontWeight: '600', color: C.blue },
 
-  moodCard:      { backgroundColor: C.card, borderRadius: 20, padding: 18, flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
-  moodCardLeft:  { flex: 1 },
-  moodCardMeta:  { fontSize: 10, fontWeight: '700', color: C.textTert, letterSpacing: 1, marginBottom: 4 },
-  moodCardValue: { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, marginBottom: 4 },
-  moodCardSub:   { fontSize: 12, color: C.textTert },
-  predictingRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
-  predictingText:{ fontSize: 12, color: C.blue },
-  moodColorDot:  { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', marginLeft: 16 },
+  moodCard:          { backgroundColor: C.card, borderRadius: 20, padding: 18, flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  moodCardLeft:      { flex: 1 },
+  moodCardMeta:      { fontSize: 10, fontWeight: '700', color: C.textTert, letterSpacing: 1, marginBottom: 4 },
+  moodCardValue:     { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, marginBottom: 4 },
+  moodCardSub:       { fontSize: 12, color: C.textTert },
+  predictingRow:     { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
+  predictingText:    { fontSize: 12, color: C.blue },
+  predictError:      { fontSize: 11, color: C.orange, marginTop: 6, lineHeight: 16 },
+  moodColorDot:      { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', marginLeft: 16 },
   moodColorDotInner: { width: 24, height: 24, borderRadius: 12 },
 
   sectionLabel: { fontSize: 11, fontWeight: '700', color: C.textTert, letterSpacing: 1, marginBottom: 10 },
@@ -465,9 +514,9 @@ const S = StyleSheet.create({
   connectBtn:     { backgroundColor: C.spotify, paddingHorizontal: 32, paddingVertical: 14, borderRadius: 30 },
   connectBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 
-  tabBar:   { flexDirection: 'row', backgroundColor: C.bg, borderRadius: 12, padding: 4, marginBottom: 20, gap: 4 },
-  tabBtn:   { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 10 },
-  tabText:  { fontSize: 13, fontWeight: '500', color: C.textTert },
+  tabBar:  { flexDirection: 'row', backgroundColor: C.bg, borderRadius: 12, padding: 4, marginBottom: 20, gap: 4 },
+  tabBtn:  { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 10 },
+  tabText: { fontSize: 13, fontWeight: '500', color: C.textTert },
 
   vibesHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   vibesBase:   { fontSize: 11, color: C.textTert, marginTop: 2 },
@@ -475,8 +524,8 @@ const S = StyleSheet.create({
   playAllText: { color: '#fff', fontWeight: '700', fontSize: 13 },
   tapHint:     { fontSize: 11, color: C.textTert, textAlign: 'center', marginBottom: 10 },
 
-  listCard:     { backgroundColor: C.card, borderRadius: 20, overflow: 'hidden', marginBottom: 4 },
-  emptyText:    { padding: 20, textAlign: 'center', fontSize: 14, color: C.textTert },
-  emptyCard:    { backgroundColor: C.card, borderRadius: 20, padding: 36, alignItems: 'center', gap: 12 },
-  emptyCardText:{ fontSize: 14, color: C.textTert, textAlign: 'center' },
+  listCard:      { backgroundColor: C.card, borderRadius: 20, overflow: 'hidden', marginBottom: 4 },
+  emptyText:     { padding: 20, textAlign: 'center', fontSize: 14, color: C.textTert },
+  emptyCard:     { backgroundColor: C.card, borderRadius: 20, padding: 36, alignItems: 'center', gap: 12 },
+  emptyCardText: { fontSize: 14, color: C.textTert, textAlign: 'center' },
 });
