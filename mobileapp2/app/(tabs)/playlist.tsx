@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useMood } from '@/lib/MoodContext';
 import { useBle } from '@/lib/BleContext';
+import { MOOD_CHAR_UUID } from '@/lib/BleContext';
 import { useSpotifyAuth } from '@/lib/spotifyAuth';
 import {
   getTopArtists, getTopTracks, getMoodRecommendations,
@@ -297,7 +298,22 @@ export default function PlaylistScreen() {
     // Re-push every 30 s — matches the device screen refresh rate
     const id = setInterval(pushTransitToDevice, 30_000);
     return () => clearInterval(id);
-  }, [bleStatus, writeChar]); 
+  }, [bleStatus, writeChar]);
+
+  useEffect(() => {
+    if (bleStatus !== 'connected' || !activeMood) return;
+    writeChar(MOOD_CHAR_UUID, activeMood);
+    console.log('[BLE→ESP32] Mood:', activeMood);
+  }, [activeMood, bleStatus, writeChar]);
+  
+  // Also push mood immediately on BLE connect (in case mood was set before connecting).
+  // Add this inside the existing bleStatus effect or as a separate one:
+  useEffect(() => {
+    if (bleStatus !== 'connected' || !activeMood) return;
+    // Small delay so device finishes connecting before we write
+    const id = setTimeout(() => writeChar(MOOD_CHAR_UUID, activeMood), 1000);
+    return () => clearTimeout(id);
+  }, [bleStatus]);
 
   // ── Recommendations ──────────────────────────────────────────────────────
   const loadRecs = useCallback(async (tk: string, mood: Mood) => {

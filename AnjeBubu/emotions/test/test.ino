@@ -134,6 +134,8 @@ static NimBLEUUID CHAR_UUID_HR          ("6E400008-B5A3-F393-E0A9-E50E24DCCA9E")
 static NimBLEUUID CHAR_UUID_TRACKS      ("6E400009-B5A3-F393-E0A9-E50E24DCCA9E"); // top tracks: newline-separated "Song - Artist"
 static NimBLEUUID CHAR_UUID_TRANSIT_LINE("6E40000A-B5A3-F393-E0A9-E50E24DCCA9E"); // GO Transit line name
 static NimBLEUUID CHAR_UUID_TRANSIT_TIME("6E40000B-B5A3-F393-E0A9-E50E24DCCA9E"); // departure time "HH:MM"
+static NimBLEUUID CHAR_UUID_MOOD("6E40000C-B5A3-F393-E0A9-E50E24DCCA9E");
+
 
 static NimBLEServer*         bleServer  = nullptr;
 static NimBLECharacteristic* txChar     = nullptr;
@@ -146,6 +148,7 @@ static NimBLECharacteristic* hrChar          = nullptr;
 static NimBLECharacteristic* tracksChar      = nullptr;
 static NimBLECharacteristic* transitLineChar = nullptr;
 static NimBLECharacteristic* transitTimeChar = nullptr;
+static NimBLECharacteristic* moodChar = nullptr;
 static volatile bool bleConnected = false;
 
 static portMUX_TYPE rxMux = portMUX_INITIALIZER_UNLOCKED;
@@ -160,6 +163,8 @@ static volatile bool bleTimePending        = false;
 static volatile bool bleTracksPending      = false;
 static volatile bool bleTransitLinePending = false;
 static volatile bool bleTransitTimePending = false;
+static volatile bool bleMoodPending = false;
+
 
 static String pendingName;
 static String pendingSong;
@@ -168,11 +173,13 @@ static String pendingTime;
 static String pendingTracks;
 static String pendingTransitLine;
 static String pendingTransitTime;
+static String pendingMood;
 
 /* ===================== Parameterized watch content ===================== */
 static String displayName = "Commubu";
 static String currentSongTitle = "Let It Happen";
 static String currentArtist    = "Tame Impala";
+static String currentMood = "unknown";
 
 // Music screen – mood-based top tracks (newline-separated "Song - Artist")
 static String topTracksRaw  = "";
@@ -619,6 +626,21 @@ public:
   }
 };
 
+class MoodCallbacks : public NimBLECharacteristicCallbacks {
+public:
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
+    (void)connInfo;
+    std::string v = c->getValue();
+    if (v.empty()) return;
+    String s = String(v.c_str());
+    s.trim();
+    portENTER_CRITICAL(&rxMux);
+    pendingMood = s;
+    bleMoodPending = true;
+    portEXIT_CRITICAL(&rxMux);
+  }
+};
+
 class ServerCallbacks : public NimBLEServerCallbacks {
 public:
   void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
@@ -711,6 +733,13 @@ static void initBLE() {
   transitTimeChar->setValue(transitDeparture.c_str());
   transitTimeChar->setCallbacks(new TransitTimeCallbacks());
 
+  moodChar = svc->createCharacteristic(
+    CHAR_UUID_MOOD,
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+  );
+  moodChar->setValue(currentMood.c_str());
+  moodChar->setCallbacks(new MoodCallbacks());
+  
   svc->start();
 
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
@@ -1097,20 +1126,123 @@ static void drawMusicTrackList() {
   }
 }
 
+// Mood color helper — maps mood string to a 16-bit RGB565 color
+static uint16_t moodColor565(const String& mood) {
+  if (mood == "happy")    return 0xFCA0;  // orange
+  if (mood == "neutral")  return 0x001F;  // blue
+  if (mood == "stressed") return 0xF800;  // red
+  if (mood == "angry")    return 0xF800;  // red
+  if (mood == "sad")      return 0x581A;  // indigo
+  if (mood == "sleepy")   return 0xAB15;  // purple
+  return FACE_GREEN;                      // fallback
+}
+
+// Mood emoji — returns a short ASCII art string for the mood
+static const char* moodEmoji(const String& mood) {
+  if (mood == "happy")    return "( ^-^ )";
+  if (mood == "sad")      return "(; _ ;)";
+  if (mood == "angry")    return "( >_< )";
+  if (mood == "stressed") return "(o_o;) ";
+  if (mood == "sleepy")   return "(-_-) z";
+  return "( ._. )";   // neutral / unknown
+}
+
+// Capitalise first letter only
+static String capitalise(const String& s) {
+  if (s.length() == 0) return s;
+  String out = s;
+  out.setCharAt(0, toUpperCase(out.charAt(0)));
+  return out;
+}
+
 static void drawMusicUI() {
-  // Header region (y=0-31) — fill only this small area, not the whole screen
-  tft.fillRect(0, 0, tft.width(), 28, ST77XX_BLACK);
-  drawCenteredText("Top Tracks", 6, 2, FACE_GREEN);
-  tft.drawFastHLine(0, 28, tft.width(), ST77XX_WHITE);
-  tft.fillRect(0, 29, tft.width(), 3, ST77XX_BLACK);  // y=29-31 gap before rows
+  // ── Full clear (region by region, no fillScreen flash) ───────────────
 
-  // Track list: drawMusicTrackList fills each row individually (y=32-287)
-  drawMusicTrackList();
+  // Header bar  y=0-44
+  tft.fillRect(0, 0, tft.width(), 45, ST77XX_BLACK);
+  drawCenteredText("Now Playing", 8, 2, FACE_GREEN);
+  tft.drawFastHLine(0, 44, tft.width(), ST77XX_WHITE);
 
-  // Now-playing bar at bottom (y=288-319)
+  // ── Mood section  y=45-179 ───────────────────────────────────────────
+  tft.fillRect(0, 45, tft.width(), 135, ST77XX_BLACK);
+
+  uint16_t mc = moodColor565(currentMood);
+
+  // "MOOD" label
+  tft.setTextSize(1);
+  tft.setTextColor(0x8410, ST77XX_BLACK);  // mid-grey
+  tft.setCursor(10, 54);
+  tft.print("MOOD");
+
+  // Mood name  (large)
+  String moodStr = (currentMood.length() > 0 && currentMood != "unknown")
+                    ? capitalise(currentMood)
+                    : "Unknown";
+  tft.setTextSize(3);
+  tft.setTextColor(mc, ST77XX_BLACK);
+  int16_t mw = stringWidth(moodStr, 3);
+  tft.setCursor((tft.width() - mw) / 2, 66);
+  tft.print(moodStr);
+
+  // Emoji art  (medium, centred)
+  const char* emoji = moodEmoji(currentMood);
+  tft.setTextSize(2);
+  tft.setTextColor(mc, ST77XX_BLACK);
+  int16_t ew = textWidth(emoji, 2);
+  tft.setCursor((tft.width() - ew) / 2, 108);
+  tft.print(emoji);
+
+  // Thin mood-coloured accent line below mood
+  tft.fillRect(20, 143, tft.width() - 40, 2, mc);
+
+  // ── Divider  y=148 ───────────────────────────────────────────────────
+  tft.fillRect(0, 148, tft.width(), 4, ST77XX_BLACK);
+
+  // ── Song section  y=152-287 ──────────────────────────────────────────
+  tft.fillRect(0, 152, tft.width(), 136, ST77XX_BLACK);
+
+  // "NOW PLAYING" label
+  tft.setTextSize(1);
+  tft.setTextColor(0x8410, ST77XX_BLACK);
+  tft.setCursor(10, 158);
+  tft.print("NOW PLAYING");
+
+  // Song title  (truncate if needed, centred)
+  String song = currentSongTitle.length() > 0 ? currentSongTitle : "No song";
+  if (song.length() > 18) song = song.substring(0, 17) + "~";
+  tft.setTextSize(2);
+  tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  int16_t sw = stringWidth(song, 2);
+  tft.setCursor((tft.width() - sw) / 2, 174);
+  tft.print(song);
+
+  // Artist name  (smaller, dimmer, centred)
+  String artist = currentArtist.length() > 0 ? currentArtist : "";
+  if (artist.length() > 22) artist = artist.substring(0, 21) + "~";
+  tft.setTextSize(1);
+  tft.setTextColor(0xC618, ST77XX_BLACK);  // light grey
+  int16_t aw = stringWidth(artist, 1);
+  tft.setCursor((tft.width() - aw) / 2, 200);
+  tft.print(artist);
+
+  // Musical note decoration (simple pixel art using filled rects)
+  // Left note
+  tft.fillRect(16,  218, 2, 14, FACE_GREEN);
+  tft.fillRect(16,  218, 6,  2, FACE_GREEN);
+  tft.fillCircle(16, 232, 3,  FACE_GREEN);
+  // Right note
+  tft.fillRect(34,  214, 2, 14, FACE_GREEN);
+  tft.fillRect(34,  214, 6,  2, FACE_GREEN);
+  tft.fillCircle(34, 228, 3,  FACE_GREEN);
+
+  // Separator before music bar
+  tft.fillRect(0, 286, tft.width(), 2, ST77XX_BLACK);
+
+  // ── Scrolling now-playing bar at bottom  y=288-319 ───────────────────
   drawMusicBarFrame();
   updateMusicBar(true);
 }
+
 
 /* ===================== Commute screen UI ===================== */
 static void drawCommuteUI() {
@@ -1275,8 +1407,10 @@ static void updateDebugAccelOnTFT() {
 static void applyPendingBleParams() {
   bool doName = false, doSong = false, doArtist = false, doTime = false;
   bool doTracks = false, doTransitLine = false, doTransitTime = false;
+  bool doMood = false;
   String newName, newSong, newArtist, newTime;
   String newTracks, newTransitLine, newTransitTime;
+  String newMood;
 
   portENTER_CRITICAL(&rxMux);
   if (bleNamePending) {
@@ -1313,6 +1447,11 @@ static void applyPendingBleParams() {
     newTransitTime = pendingTransitTime;
     bleTransitTimePending = false;
     doTransitTime = true;
+  }
+  if (bleMoodPending) {
+    newMood = pendingMood;
+    bleMoodPending = false;
+    doMood = true;
   }
   portEXIT_CRITICAL(&rxMux);
 
@@ -1371,6 +1510,12 @@ static void applyPendingBleParams() {
     if (transitTimeChar) transitTimeChar->setValue(transitDeparture.c_str());
     if (uiMode == UI_COMMUTE) drawCommuteUI();
     bleSend("TransitTime=" + transitDeparture);
+  }
+  if (doMood) {
+    currentMood = newMood;
+    if (moodChar) moodChar->setValue(currentMood.c_str());
+    if (uiMode == UI_MUSIC) drawMusicUI();   // refresh screen immediately
+    bleSend("Mood=" + currentMood);
   }
 }
 
