@@ -1,19 +1,15 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
-  StyleSheet,
-  ScrollView,
-  Pressable,
-  Alert,
-  ActivityIndicator,
-  StatusBar,
-  View,
-  Text,
+  StyleSheet, ScrollView, Pressable, Alert, ActivityIndicator,
+  StatusBar, View, Text, Image, Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useBle } from '@/lib/BleContext';
 import { useMood } from '@/lib/MoodContext';
+import { useNowPlaying } from '@/lib/NowPlayingContext';
+import { NowPlaying } from '@/lib/spotifyApi';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
@@ -29,27 +25,18 @@ const C = {
   red:      '#FF3B30',
   purple:   '#AF52DE',
   indigo:   '#5856D6',
+  spotify:  '#1DB954',
 };
 
 const MOOD_COLOR: Record<string, string> = {
-  happy:    '#FF9500',
-  neutral:  '#007AFF',
-  stressed: '#FF3B30',
-  angry:    '#FF3B30',
-  sad:      '#5856D6',
-  sleepy:   '#AF52DE',
+  happy:    '#FF9500', neutral:  '#007AFF', stressed: '#FF3B30',
+  angry:    '#FF3B30', sad:      '#5856D6', sleepy:   '#AF52DE',
 };
-
 const MOOD_LABEL: Record<string, string> = {
-  happy:    'Happy',
-  neutral:  'Neutral',
-  stressed: 'Stressed',
-  angry:    'Angry',
-  sad:      'Sad',
-  sleepy:   'Sleepy',
+  happy: 'Happy', neutral: 'Neutral', stressed: 'Stressed',
+  angry: 'Angry', sad: 'Sad',        sleepy: 'Sleepy',
 };
 
-// ─── Transit ──────────────────────────────────────────────────────────────────
 const TRANSIT_URL = 'https://ffed-141-117-117-125.ngrok-free.app/api/transit/next';
 const STORAGE_KEY = 'commute_selected_line';
 
@@ -62,19 +49,99 @@ function trainColor(mins: number) {
   return C.green;
 }
 
+// ─── Progress bar ─────────────────────────────────────────────────────────────
+function ProgressBar({ progressMs, durationMs }: { progressMs: number; durationMs: number }) {
+  const pct = durationMs > 0 ? Math.min((progressMs / durationMs) * 100, 100) : 0;
+  const fmt = (ms: number) => {
+    const s = Math.floor(ms / 1000);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  };
+  return (
+    <View style={PB.wrap}>
+      <View style={PB.track}>
+        <View style={[PB.fill, { width: `${pct}%` as any }]} />
+      </View>
+      <View style={PB.times}>
+        <Text style={PB.time}>{fmt(progressMs)}</Text>
+        <Text style={PB.time}>{fmt(durationMs)}</Text>
+      </View>
+    </View>
+  );
+}
+const PB = StyleSheet.create({
+  wrap:  { marginTop: 8 },
+  track: { height: 4, backgroundColor: '#E5E5EA', borderRadius: 2, overflow: 'hidden' },
+  fill:  { height: '100%', backgroundColor: C.spotify, borderRadius: 2 },
+  times: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 3 },
+  time:  { fontSize: 10, color: C.textTert, fontWeight: '500' },
+});
+
+// ─── Now Playing mini-card ────────────────────────────────────────────────────
+function NowPlayingCard({ np }: { np: NowPlaying }) {
+  const openSpotify = () =>
+    Linking.openURL(np.trackUri).catch(() => {});
+
+  return (
+    <Pressable onPress={openSpotify} style={NPC.card}>
+      {/* Spotify green accent bar */}
+      <View style={NPC.bar} />
+      <View style={NPC.inner}>
+        <View style={NPC.topRow}>
+          <View style={NPC.badge}>
+            <View style={[NPC.dot, { backgroundColor: np.isPlaying ? C.spotify : C.textTert }]} />
+            <Text style={[NPC.badgeText, { color: np.isPlaying ? C.spotify : C.textTert }]}>
+              {np.isPlaying ? 'Now Playing' : 'Paused'}
+            </Text>
+          </View>
+          <Ionicons name="open-outline" size={13} color={C.textTert} />
+        </View>
+
+        <View style={NPC.body}>
+          {np.albumArt
+            ? <Image source={{ uri: np.albumArt }} style={NPC.art} />
+            : <View style={[NPC.art, NPC.artFallback]}>
+                <Ionicons name="musical-note" size={22} color={C.textTert} />
+              </View>
+          }
+          <View style={NPC.meta}>
+            <Text style={NPC.song} numberOfLines={1}>{np.songTitle}</Text>
+            <Text style={NPC.artist} numberOfLines={1}>{np.artistName}</Text>
+            <ProgressBar progressMs={np.progressMs} durationMs={np.durationMs} />
+          </View>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+const NPC = StyleSheet.create({
+  card:       { backgroundColor: C.card, borderRadius: 20, overflow: 'hidden', marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 2 }, elevation: 3 },
+  bar:        { height: 3, backgroundColor: C.spotify },
+  inner:      { padding: 16 },
+  topRow:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  badge:      { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  dot:        { width: 6, height: 6, borderRadius: 3 },
+  badgeText:  { fontSize: 11, fontWeight: '700' },
+  body:       { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  art:        { width: 56, height: 56, borderRadius: 10 },
+  artFallback:{ backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center' },
+  meta:       { flex: 1 },
+  song:       { fontSize: 15, fontWeight: '700', color: C.text, letterSpacing: -0.2, marginBottom: 2 },
+  artist:     { fontSize: 12, color: C.textTert, marginBottom: 2 },
+});
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { status, deviceName, data, connect, disconnect, error, clearError } = useBle();
   const { mood } = useMood();
+  const { nowPlaying } = useNowPlaying();
 
   const [nextTrain,    setNextTrain]    = useState<{ dest: string; mins: number; line: string } | null>(null);
   const [trainLine,    setTrainLine]    = useState<string | null>(null);
   const [trainLoading, setTrainLoading] = useState(false);
 
   const isConnected = status === 'connected';
-
-  // Only show live data when connected
   const steps     = isConnected ? (data.steps     ?? 0)    : 0;
   const heartRate = isConnected ? (data.heartRate  ?? null) : null;
   const battery   = isConnected ? (data.batteryPercent ?? null) : null;
@@ -84,7 +151,6 @@ export default function HomeScreen() {
   const moodColor  = activeMood ? (MOOD_COLOR[activeMood] ?? C.blue) : C.textTert;
   const moodLabel  = activeMood ? (MOOD_LABEL[activeMood] ?? activeMood) : 'Not detected';
 
-  // Re-read transit line every time this tab is focused so changes from the Commute tab are picked up
   useFocusEffect(
     useCallback(() => {
       import('@react-native-async-storage/async-storage').then(async m => {
@@ -94,7 +160,6 @@ export default function HomeScreen() {
     }, [])
   );
 
-  // Fetch next departure
   const fetchTrain = useCallback(async () => {
     if (!trainLine) return;
     setTrainLoading(true);
@@ -123,7 +188,10 @@ export default function HomeScreen() {
   const handleBle = () => {
     if (isConnected) { disconnect(); return; }
     if (error) {
-      Alert.alert('BLE Error', error, [{ text: 'Retry', onPress: () => { clearError(); connect(); } }, { text: 'Cancel' }]);
+      Alert.alert('BLE Error', error, [
+        { text: 'Retry', onPress: () => { clearError(); connect(); } },
+        { text: 'Cancel' },
+      ]);
       return;
     }
     connect();
@@ -161,7 +229,7 @@ export default function HomeScreen() {
           </Pressable>
         </View>
 
-        {/* ── Not connected banner ── */}
+        {/* ── Connect banner ── */}
         {!isConnected && status === 'disconnected' && (
           <Pressable onPress={connect} style={S.banner}>
             <Ionicons name="bluetooth-outline" size={16} color={C.blue} />
@@ -169,6 +237,9 @@ export default function HomeScreen() {
             <Ionicons name="chevron-forward" size={14} color={C.blue} />
           </Pressable>
         )}
+
+        {/* ── Now Playing ── shown when Spotify is connected in the Playlist tab */}
+        {nowPlaying && <NowPlayingCard np={nowPlaying} />}
 
         {/* ── Mood hero card ── */}
         <View style={S.moodCard}>
@@ -192,10 +263,8 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* ── 2-col row: Steps + Heart Rate ── */}
+        {/* ── Steps + Heart Rate ── */}
         <View style={S.row}>
-
-          {/* Steps */}
           <View style={[S.card, S.cardHalf]}>
             <View style={S.cardTopRow}>
               <Text style={S.cardLabel}>Steps</Text>
@@ -225,7 +294,6 @@ export default function HomeScreen() {
             )}
           </View>
 
-          {/* Heart Rate */}
           <View style={[S.card, S.cardHalf]}>
             <View style={S.cardTopRow}>
               <Text style={S.cardLabel}>Heart Rate</Text>
@@ -264,7 +332,7 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* ── Battery strip (only when connected) ── */}
+        {/* ── Battery ── */}
         {isConnected && battery !== null && (
           <View style={[S.card, S.batteryRow]}>
             <Ionicons
@@ -329,7 +397,6 @@ export default function HomeScreen() {
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
 const S = StyleSheet.create({
   root:   { flex: 1, backgroundColor: C.bg },
   scroll: { paddingHorizontal: 16, paddingTop: 8 },
@@ -340,19 +407,10 @@ const S = StyleSheet.create({
   bleBtn:   { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.card, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
   bleText:  { fontSize: 12, fontWeight: '600' },
 
-  banner: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: C.blue + '10', borderRadius: 14,
-    paddingHorizontal: 14, paddingVertical: 11, marginBottom: 12,
-  },
+  banner:     { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.blue + '10', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 11, marginBottom: 12 },
   bannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: C.blue },
 
-  moodCard: {
-    backgroundColor: C.card, borderRadius: 20, padding: 20,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.06,
-    shadowRadius: 12, shadowOffset: { width: 0, height: 2 }, elevation: 3,
-  },
+  moodCard: { backgroundColor: C.card, borderRadius: 20, padding: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 2 }, elevation: 3 },
   moodCardLeft:    { flex: 1 },
   moodCardLabel:   { fontSize: 12, color: C.textTert, fontWeight: '500', marginBottom: 4 },
   moodCardValue:   { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, marginBottom: 4 },
@@ -362,12 +420,8 @@ const S = StyleSheet.create({
   moodEmojiNote:   { fontSize: 9, marginTop: 4, fontWeight: '500', opacity: 0.7 },
 
   row:      { flexDirection: 'row', gap: 12, marginBottom: 12 },
-  card: {
-    backgroundColor: C.card, borderRadius: 20, padding: 18, marginBottom: 12,
-    shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12,
-    shadowOffset: { width: 0, height: 2 }, elevation: 3,
-  },
-  cardHalf:   { flex: 1, marginBottom: 0 },
+  card:     { backgroundColor: C.card, borderRadius: 20, padding: 18, marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 2 }, elevation: 3 },
+  cardHalf: { flex: 1, marginBottom: 0 },
   cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   cardLabel:  { fontSize: 13, color: C.textTert, fontWeight: '500' },
   cardValue:  { fontSize: 32, fontWeight: '700', color: C.text, letterSpacing: -1, marginBottom: 2 },

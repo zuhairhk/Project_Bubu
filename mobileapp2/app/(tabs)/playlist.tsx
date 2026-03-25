@@ -18,6 +18,7 @@ import {
   TRANSIT_LINE_CHAR_UUID, TRANSIT_TIME_CHAR_UUID,
   TIME_CHAR_UUID,
 } from '@/lib/BleContext';
+import { useNowPlaying } from '@/lib/NowPlayingContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -42,7 +43,6 @@ const MOOD_LABEL: Record<string, string> = {
 const BACKEND_URL  = 'https://ffed-141-117-117-125.ngrok-free.app';
 const PREDICT_URL  = `${BACKEND_URL}/api/ml/predict`;
 const PREDICT_MS   = 5 * 60 * 1000;   // 5 min mood prediction interval
-const NOW_PLAY_MS  = 15_000;           // 15 s now-playing poll interval
 const STORAGE_KEY  = 'commute_selected_line';
 
 const MOOD_LABELS = ['happy', 'neutral', 'stressed', 'angry', 'sad', 'sleepy'] as const;
@@ -204,15 +204,14 @@ export default function PlaylistScreen() {
   const [recLoading,   setRecLoading]   = useState(false);
   const [queuingTracks,setQueuingTracks]= useState(false);
 
-  // Now playing state
-  const [nowPlaying,     setNowPlaying]     = useState<NowPlaying | null>(null);
+  // Now playing — shared via context so HomeScreen sees it too
+  const { nowPlaying, setToken: setNowPlayingToken } = useNowPlaying();
   const [lastSentSong,   setLastSentSong]   = useState<string>('');
   const [lastSentTransit,setLastSentTransit]= useState<string>('');
 
   const lastRecMoodRef  = useRef<Mood | null>(null);
   const lastRecTokenRef = useRef<string | null>(null);
   const predictTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const nowPlayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Spotify auth ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -223,6 +222,7 @@ export default function PlaylistScreen() {
         const result = await getToken();
         if (result?.access_token) {
           setToken(result.access_token);
+          setNowPlayingToken(result.access_token);
           const [ar, tr] = await Promise.all([getTopArtists(result.access_token), getTopTracks(result.access_token)]);
           setArtists(ar.items ?? []);
           setTopTracks(tr.items ?? []);
@@ -232,19 +232,6 @@ export default function PlaylistScreen() {
     }
     handleAuth();
   }, [response]);
-
-  // ── Now Playing poll ─────────────────────────────────────────────────────────
-  const fetchNowPlaying = useCallback(async () => {
-    if (!token) return;
-    const np = await getNowPlaying(token);
-    setNowPlaying(np);
-  }, [token]);
-
-  useEffect(() => {
-    fetchNowPlaying();
-    nowPlayTimerRef.current = setInterval(fetchNowPlaying, NOW_PLAY_MS);
-    return () => { if (nowPlayTimerRef.current) clearInterval(nowPlayTimerRef.current); };
-  }, [fetchNowPlaying]);
 
   // ── Push song info to ESP32 when now-playing changes ──────────────────────
   useEffect(() => {
@@ -394,7 +381,7 @@ export default function PlaylistScreen() {
           </View>
           {token && (
             <Pressable
-              onPress={() => { setToken(null); setArtists([]); setTopTracks([]); setRecTracks([]); setNowPlaying(null); lastRecMoodRef.current = null; }}
+              onPress={() => { setToken(null); setNowPlayingToken(null); setArtists([]); setTopTracks([]); setRecTracks([]); lastRecMoodRef.current = null; }}
               style={S.reloginBtn}
             >
               <Ionicons name="refresh-outline" size={14} color={C.blue} />
