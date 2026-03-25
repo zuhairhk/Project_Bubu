@@ -3,6 +3,7 @@ import {
   StyleSheet,
   ScrollView,
   Pressable,
+  NativeModules,
   View,
   Text,
   StatusBar,
@@ -203,10 +204,46 @@ function BatteryCard({ percent, voltage, connected }: {
   );
 }
 
+// ─── BLE debug card ───────────────────────────────────────────────────────────
+function BleDebugCard({ status, error, data }: {
+  status: string; error: string | null; data: any;
+}) {
+  const nativeOk = !!NativeModules.BleClientManager;
+  const rows: { label: string; value: string; ok?: boolean }[] = [
+    { label: 'Native BLE module', value: nativeOk ? 'loaded ✓' : 'MISSING — use dev build, not Expo Go', ok: nativeOk },
+    { label: 'Status',            value: status },
+    { label: 'Error',             value: error ?? 'none', ok: !error },
+    { label: 'HR',                value: data.heartRate != null ? `${data.heartRate} bpm` : 'null' },
+    { label: 'Steps',             value: data.steps     != null ? String(data.steps)      : 'null' },
+    { label: 'Battery',           value: data.batteryPercent != null ? `${data.batteryPercent}%` : 'null' },
+  ];
+  return (
+    <View style={[DBG.card, cardShadow]}>
+      <Text style={DBG.heading}>BLE Debug</Text>
+      {rows.map(r => (
+        <View key={r.label} style={DBG.row}>
+          <Text style={DBG.label}>{r.label}</Text>
+          <Text style={[DBG.value, r.ok === false && { color: '#FF3B30' }, r.ok === true && { color: '#34C759' }]}>
+            {r.value}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+const DBG = StyleSheet.create({
+  card:    { backgroundColor: '#1C1C1E', borderRadius: 16, padding: 16, marginBottom: 12 },
+  heading: { fontSize: 12, fontWeight: '700', color: '#8E8E93', letterSpacing: 1, marginBottom: 10 },
+  row:     { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#3A3A3C' },
+  label:   { fontSize: 12, color: '#8E8E93', flex: 1 },
+  value:   { fontSize: 12, color: '#FFFFFF', fontWeight: '600', flex: 2, textAlign: 'right' },
+});
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function BiometricsScreen() {
   const insets = useSafeAreaInsets();
-  const { status, data, connect } = useBle();
+  const { status, data, connect, error } = useBle();
   const { heartRate, steps, batteryPercent, batteryVoltage } = data;
   const isConnected = status === 'connected';
 
@@ -272,6 +309,9 @@ export default function BiometricsScreen() {
           <Text style={S.cardSub}>Sleep tracking coming soon</Text>
         </View>
 
+        {/* ── BLE debug panel ── remove once connection is confirmed working */}
+        <BleDebugCard status={status} error={error} data={data} />
+
         <View style={{ height: 110 }} />
       </ScrollView>
     </View>
@@ -309,7 +349,7 @@ const S = StyleSheet.create({
   hrZones:    { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
   hrZone:     { alignItems: 'center', gap: 3 },
   hrZoneDot:  { width: 8, height: 8, borderRadius: 4 },
-  hrZoneLabel:{ fontSize: 11, fontWeight: '600', color: C.textSec },
+  hrZoneLabel:{ fontSize: 11, fontWeight: '600', color: C.textSec as any },
   hrZoneRange:{ fontSize: 10, color: C.textTert },
 
   stepsFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
