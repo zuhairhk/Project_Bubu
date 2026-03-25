@@ -43,7 +43,7 @@ const MOOD_LABEL: Record<string, string> = {
 
 const BACKEND_URL  = 'https://ffed-141-117-117-125.ngrok-free.app';
 const PREDICT_URL  = `${BACKEND_URL}/api/ml/predict`;
-const PREDICT_MS   = 5 * 60 * 1000;   // 5 min mood prediction interval
+const PREDICT_MS   = 5 * 60 * 1000;
 const STORAGE_KEY  = 'commute_selected_line';
 
 const MOOD_LABELS = ['happy', 'neutral', 'stressed', 'angry', 'sad', 'sleepy'] as const;
@@ -205,13 +205,13 @@ export default function PlaylistScreen() {
   const [recLoading,   setRecLoading]   = useState(false);
   const [queuingTracks,setQueuingTracks]= useState(false);
 
-  // Now playing — shared via context so HomeScreen sees it too
+  // Track whether recs have been loaded for the current mood
+  // so we only fetch once per mood when the tab is opened
+  const loadedRecsMoodRef = useRef<Mood | null>(null);
+
   const { nowPlaying, setToken: setNowPlayingToken } = useNowPlaying();
   const [lastSentSong,   setLastSentSong]   = useState<string>('');
-  const [lastSentTransit,setLastSentTransit]= useState<string>('');
 
-  const lastRecMoodRef  = useRef<Mood | null>(null);
-  const lastRecTokenRef = useRef<string | null>(null);
   const predictTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Spotify auth ────────────────────────────────────────────────────────────
@@ -234,37 +234,26 @@ export default function PlaylistScreen() {
     handleAuth();
   }, [response]);
 
-  // ── Push song info to ESP32 when now-playing changes ──────────────────────
+  // ── Push song info to ESP32 ──────────────────────────────────────────────
   useEffect(() => {
     if (bleStatus !== 'connected' || !nowPlaying) return;
-
     const songKey = `${nowPlaying.songTitle}|${nowPlaying.artistName}`;
     if (songKey === lastSentSong) return;
     setLastSentSong(songKey);
-
     writeChar(SONG_CHAR_UUID,   nowPlaying.songTitle);
     writeChar(ARTIST_CHAR_UUID, nowPlaying.artistName);
-
-    // Sync current time to device
     const now  = new Date();
     const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     writeChar(TIME_CHAR_UUID, hhmm);
-
-    console.log('[BLE→ESP32] Song:', nowPlaying.songTitle, '|', nowPlaying.artistName);
   }, [nowPlaying, bleStatus, writeChar, lastSentSong]);
 
-  // ── Push transit info to ESP32 when connected ────────────────────────────
+  // ── Push transit info to ESP32 ───────────────────────────────────────────
   useEffect(() => {
     if (bleStatus !== 'connected') return;
-  
     async function pushTransitToDevice() {
       const line = await AsyncStorage.getItem('commute_selected_line');
       if (!line) return;
-  
-      // Push transit line name
       writeChar(TRANSIT_LINE_CHAR_UUID, line);
-  
-      // Fetch next departure and push time as HH:MM
       try {
         const res = await fetch(
           'https://ffed-141-117-117-125.ngrok-free.app/api/transit/next',
@@ -272,30 +261,21 @@ export default function PlaylistScreen() {
         );
         if (!res.ok) return;
         const json = await res.json();
-  
         const now = new Date();
         const minutesUntil = (iso: string) =>
           Math.round((new Date(iso).getTime() - now.getTime()) / 60000);
-  
         const next = (json.departures ?? [])
           .filter((d: any) => d.line?.toLowerCase().includes(line.toLowerCase()))
           .filter((d: any) => minutesUntil(d.time) >= 0)
           .sort((a: any, b: any) => minutesUntil(a.time) - minutesUntil(b.time))[0];
-  
         if (next?.time) {
           const dep = new Date(next.time);
           const hhmm = `${String(dep.getHours()).padStart(2, '0')}:${String(dep.getMinutes()).padStart(2, '0')}`;
           writeChar(TRANSIT_TIME_CHAR_UUID, hhmm);
-          console.log('[BLE→ESP32] Transit:', line, 'next at', hhmm);
         }
-      } catch (e) {
-        console.warn('[Transit push] fetch failed:', e);
-      }
+      } catch (e) { console.warn('[Transit push] fetch failed:', e); }
     }
-  
     pushTransitToDevice();
-  
-    // Re-push every 30 s — matches the device screen refresh rate
     const id = setInterval(pushTransitToDevice, 30_000);
     return () => clearInterval(id);
   }, [bleStatus, writeChar]);
@@ -303,32 +283,28 @@ export default function PlaylistScreen() {
   useEffect(() => {
     if (bleStatus !== 'connected' || !activeMood) return;
     writeChar(MOOD_CHAR_UUID, activeMood);
-    console.log('[BLE→ESP32] Mood:', activeMood);
   }, [activeMood, bleStatus, writeChar]);
-  
-  // Also push mood immediately on BLE connect (in case mood was set before connecting).
-  // Add this inside the existing bleStatus effect or as a separate one:
+
   useEffect(() => {
     if (bleStatus !== 'connected' || !activeMood) return;
-    // Small delay so device finishes connecting before we write
     const id = setTimeout(() => writeChar(MOOD_CHAR_UUID, activeMood), 1000);
     return () => clearTimeout(id);
   }, [bleStatus]);
 
-  // ── Recommendations ──────────────────────────────────────────────────────
+  // ── Load recs — only called explicitly, never automatically ──────────────
   const loadRecs = useCallback(async (tk: string, mood: Mood) => {
-    if (lastRecMoodRef.current === mood && lastRecTokenRef.current === tk) return;
-    lastRecMoodRef.current  = mood;
-    lastRecTokenRef.current = tk;
+    // Skip if we already have recs for this exact mood
+    if (loadedRecsMoodRef.current === mood && recTracks.length > 0) return;
+    loadedRecsMoodRef.current = mood;
     setRecLoading(true);
     try {
       const r = await getMoodRecommendations(tk, mood, 20);
       setRecTracks(r.tracks as Track[]);
     } catch (e) { console.error('Recs error:', e); }
     finally { setRecLoading(false); }
-  }, []);
+  }, [recTracks.length]);
 
-  // ── Mood prediction ───────────────────────────────────────────────────────
+  // ── Mood prediction — updates mood state only, never touches recs ─────────
   const predictMood = useCallback(async () => {
     if (bleStatus !== 'connected' || !bleData.heartRate) return;
     setPredicting(true);
@@ -341,7 +317,6 @@ export default function PlaylistScreen() {
           user_id: 'dev_user',
           heart_rate: bleData.heartRate,
           steps_last_minute: bleData.steps ?? 0,
-          // Include current track genre context for better mood inference
           current_track: nowPlaying ? `${nowPlaying.songTitle} by ${nowPlaying.artistName}` : null,
           location_variance: 0.00003,
           timestamp: new Date().toISOString(),
@@ -351,11 +326,16 @@ export default function PlaylistScreen() {
       const json = await res.json();
       const mood = json.mood as Mood;
       setPredictionConf(json.confidence ?? 0);
+      // Only update mood state — do NOT trigger loadRecs here
       if (moodSource !== 'manual') {
         setActiveMood(mood);
         setGlobalMood(mood);
         setMoodSource('auto');
-        if (token) loadRecs(token, mood);
+        // Invalidate cached recs if mood changed so next tab open refetches
+        if (loadedRecsMoodRef.current !== mood) {
+          loadedRecsMoodRef.current = null;
+          setRecTracks([]);
+        }
       }
     } catch (e: any) {
       const msg: string = e?.message ?? String(e);
@@ -363,7 +343,7 @@ export default function PlaylistScreen() {
       else if (msg.includes('429')) setPredictError('Rate limited — will retry later.');
       else console.warn('[Predict]', msg);
     } finally { setPredicting(false); }
-  }, [bleStatus, bleData.heartRate, bleData.steps, nowPlaying, moodSource, token, setGlobalMood, loadRecs]);
+  }, [bleStatus, bleData.heartRate, bleData.steps, nowPlaying, moodSource, setGlobalMood]);
 
   useEffect(() => {
     predictMood();
@@ -371,17 +351,27 @@ export default function PlaylistScreen() {
     return () => { if (predictTimerRef.current) clearInterval(predictTimerRef.current); };
   }, [predictMood]);
 
-  useEffect(() => {
-    if (token && activeMood) loadRecs(token, activeMood);
-  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Tab switch — load recs only when user opens the Vibes tab ─────────────
+  const handleTabPress = useCallback((newTab: 'charts' | 'vibes') => {
+    setTab(newTab);
+    if (newTab === 'vibes' && token && activeMood) {
+      loadRecs(token, activeMood);
+    }
+  }, [token, activeMood, loadRecs]);
 
+  // ── Manual mood override ──────────────────────────────────────────────────
   const handleManualMood = useCallback((mood: Mood) => {
     setActiveMood(mood);
     setGlobalMood(mood);
     setMoodSource('manual');
-    lastRecMoodRef.current = null;
-    if (token) loadRecs(token, mood);
-  }, [token, setGlobalMood, loadRecs]);
+    // Invalidate so next Vibes tab open refetches for the new mood
+    loadedRecsMoodRef.current = null;
+    setRecTracks([]);
+    // If already on Vibes tab, load immediately
+    if (tab === 'vibes' && token) {
+      loadRecs(token, mood);
+    }
+  }, [token, tab, setGlobalMood, loadRecs]);
 
   const handleTrackPress = useCallback((track: Track) => {
     Linking.openURL(track.uri).catch(() => Linking.openURL(track.external_urls.spotify));
@@ -421,7 +411,11 @@ export default function PlaylistScreen() {
           </View>
           {token && (
             <Pressable
-              onPress={() => { setToken(null); setNowPlayingToken(null); setArtists([]); setTopTracks([]); setRecTracks([]); lastRecMoodRef.current = null; }}
+              onPress={() => {
+                setToken(null); setNowPlayingToken(null);
+                setArtists([]); setTopTracks([]); setRecTracks([]);
+                loadedRecsMoodRef.current = null;
+              }}
               style={S.reloginBtn}
             >
               <Ionicons name="refresh-outline" size={14} color={C.blue} />
@@ -430,7 +424,7 @@ export default function PlaylistScreen() {
           )}
         </View>
 
-        {/* Now Playing — shown whenever Spotify is connected and something is/was playing */}
+        {/* Now Playing */}
         {token && nowPlaying && (
           <NowPlayingCard np={nowPlaying} onOpen={handleNowPlayingOpen} />
         )}
@@ -443,7 +437,7 @@ export default function PlaylistScreen() {
             </Text>
             <Text style={[S.moodCardValue, { color: moodColor }]}>{moodLabel}</Text>
             <Text style={S.moodCardSub}>
-              {moodSource === 'auto'   ? `${Math.round(predictionConf * 100)}% confidence`
+              {moodSource === 'auto'     ? `${Math.round(predictionConf * 100)}% confidence`
                : moodSource === 'manual' ? 'Override active'
                : bleStatus === 'connected' ? 'Waiting for reading…'
                : 'Connect device or override below'}
@@ -488,10 +482,10 @@ export default function PlaylistScreen() {
           <>
             <View style={S.tabBar}>
               {(['charts', 'vibes'] as const).map(t => (
-                <Pressable key={t} onPress={() => setTab(t)}
+                <Pressable key={t} onPress={() => handleTabPress(t)}
                   style={[S.tabBtn, tab === t && { backgroundColor: C.card, ...cardShadow }]}>
                   <Text style={[S.tabText, tab === t && { color: C.text, fontWeight: '600' }]}>
-                    {t === 'charts' ? 'Top Charts' : `${activeMood ? MOOD_LABEL[activeMood] + ' ' : ''}Vibes`}
+                    {t === 'charts' ? 'Top Charts' : activeMood ? `${MOOD_LABEL[activeMood]} Vibes` : 'Vibes'}
                   </Text>
                 </Pressable>
               ))}
@@ -516,7 +510,7 @@ export default function PlaylistScreen() {
                   <View>
                     <Text style={S.sectionLabel}>{activeMood ? `FOR YOUR ${activeMood.toUpperCase()} MOOD` : 'RECOMMENDED'}</Text>
                     {artists.length > 0 && activeMood && (
-                      <Text style={S.vibesBase}>Based on {artists.slice(0, 2).map(a => a.name).join(', ')}</Text>
+                      <Text style={S.vibesBase}>Based on your listening history</Text>
                     )}
                   </View>
                   {recTracks.length > 0 && (
@@ -539,7 +533,9 @@ export default function PlaylistScreen() {
                 ) : (
                   <View style={[S.emptyCard, cardShadow]}>
                     <Ionicons name="musical-notes-outline" size={32} color={C.textTert} />
-                    <Text style={S.emptyCardText}>{activeMood ? 'Loading recommendations…' : 'Select a mood to see recommendations'}</Text>
+                    <Text style={S.emptyCardText}>
+                      {activeMood ? `Tap the tab above to load your ${MOOD_LABEL[activeMood].toLowerCase()} picks` : 'Select a mood to see recommendations'}
+                    </Text>
                   </View>
                 )}
               </>
