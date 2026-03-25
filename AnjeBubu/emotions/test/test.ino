@@ -1751,16 +1751,19 @@ void setup() {
 
 /* ===================== Loop ===================== */
 void loop() {
-  static uint32_t lastActivity = millis();
+  static uint32_t lastActivity       = millis();
+  static uint32_t lastMusicRefresh   = 0;   // NEW
+  static uint32_t lastCommuteRefresh = 0;   // NEW
   static esp_sleep_wakeup_cause_t cachedCause = esp_sleep_get_wakeup_cause();
   static const char* causeStr = wakeCauseToStr(cachedCause);
 
   updateHeartRate();
   updateLocalClock();
   updateAnimation();
-  applyPendingBleParams();
+  applyPendingBleParams();   // applies any song/artist/transit data written by app
   pollBattery();
 
+  // ── Handle BLE RX messages ──────────────────────────────────────────
   if (rxPending) {
     String msgCopy;
     portENTER_CRITICAL(&rxMux);
@@ -1783,14 +1786,16 @@ void loop() {
 
   handleModeToggleChord(causeStr);
 
-  // Button 1 (leftmost): Music screen
+  // ── Button 1 (top): Now-Playing / Music screen ──────────────────────
   if (b1.fell()) {
     uiMode = UI_MUSIC;
     drawMusicUI();
-    lastActivity = millis();
+    lastMusicRefresh = millis();
+    lastActivity     = millis();
     bleSend("UI: Music");
   }
-  // Button 2 (middle): Home / Watch face
+
+  // ── Button 2 (middle): Home / Watch face ────────────────────────────
   if (b2.fell()) {
     uiMode = UI_WATCH;
     invalidateWatchCache();
@@ -1798,14 +1803,17 @@ void loop() {
     lastActivity = millis();
     bleSend("UI: Home");
   }
-  // Button 3 (rightmost): Commute screen
+
+  // ── Button 3 (bottom): Commute / Transit screen ─────────────────────
   if (b3.fell()) {
     uiMode = UI_COMMUTE;
     drawCommuteUI();
-    lastActivity = millis();
+    lastCommuteRefresh = millis();
+    lastActivity       = millis();
     bleSend("UI: Commute");
   }
 
+  // ── Step polling (unchanged) ─────────────────────────────────────────
   static uint32_t lastStepPoll = 0;
   if (millis() - lastStepPoll >= 40) {
     lastStepPoll = millis();
@@ -1816,13 +1824,14 @@ void loop() {
 
     if (didStep) {
       if (uiMode == UI_DEBUG) updateDebugStepsOnTFT();
-      else drawWatchStatsValues(false);
+      else if (uiMode == UI_WATCH) drawWatchStatsValues(false);
 
       lastActivity = millis();
       bleSend("Step! count=" + String(stepsNew));
     }
   }
 
+  // ── Watch face stats refresh (250 ms) ────────────────────────────────
   static uint32_t lastStatsUi = 0;
   if (millis() - lastStatsUi >= 250) {
     lastStatsUi = millis();
@@ -1838,21 +1847,41 @@ void loop() {
     }
   }
 
+  // ── Music bar scroll (watch + music screens) ──────────────────────────
   if (uiMode == UI_WATCH || uiMode == UI_MUSIC) {
     updateMusicBar(false);
   }
 
+  // ── Music screen auto-refresh every 15 s ─────────────────────────────
+  // The app pushes new song/artist via BLE whenever the track changes.
+  // applyPendingBleParams() above already calls updateMusicBar(true) when
+  // new data arrives. This 15-second redraw is a belt-and-suspenders full
+  // redraw in case anything drifted (e.g. track list scroll position).
+  if (uiMode == UI_MUSIC && (millis() - lastMusicRefresh >= 15000UL)) {
+    lastMusicRefresh = millis();
+    drawMusicUI();           // full redraw: header + track list + now-playing bar
+  }
+
+  // ── Commute screen auto-refresh every 30 s ───────────────────────────
+  // The app pushes transit line + departure time via BLE after each fetch.
+  // applyPendingBleParams() already redraws on new data. This 30-second
+  // full redraw ensures the screen stays visually fresh.
+  if (uiMode == UI_COMMUTE && (millis() - lastCommuteRefresh >= 30000UL)) {
+    lastCommuteRefresh = millis();
+    drawCommuteUI();         // full redraw with latest transitLine + transitDeparture
+  }
+
+  // ── BLE heartbeat: HR + battery (every 1 s) ──────────────────────────
   static uint32_t lastBleHr = 0;
   if (millis() - lastBleHr > 1000) {
     lastBleHr = millis();
-
     updateHrCharacteristic();
-
     bleSend("BPM=" + String(displayBPM) +
             " Batt=" + String(batteryPercent) + "%" +
             " V=" + String(batteryVoltage, 2));
   }
 
+  // ── Auto sleep when idle and BLE disconnected ─────────────────────────
   if (!bleConnected && (millis() - lastActivity > SLEEP_IDLE_MS)) {
     Serial.println("Sleeping...");
     enterDeepSleep();

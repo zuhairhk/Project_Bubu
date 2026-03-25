@@ -255,25 +255,49 @@ export default function PlaylistScreen() {
   // ── Push transit info to ESP32 when connected ────────────────────────────
   useEffect(() => {
     if (bleStatus !== 'connected') return;
-
-    async function pushTransit() {
-      const line = await AsyncStorage.getItem(STORAGE_KEY);
+  
+    async function pushTransitToDevice() {
+      const line = await AsyncStorage.getItem('commute_selected_line');
       if (!line) return;
-
-      // Only push if changed
-      const key = line;
-      if (key === lastSentTransit) return;
-      setLastSentTransit(key);
-
+  
+      // Push transit line name
       writeChar(TRANSIT_LINE_CHAR_UUID, line);
-      console.log('[BLE→ESP32] Transit line:', line);
+  
+      // Fetch next departure and push time as HH:MM
+      try {
+        const res = await fetch(
+          'https://ffed-141-117-117-125.ngrok-free.app/api/transit/next',
+          { headers: { 'ngrok-skip-browser-warning': '1' } }
+        );
+        if (!res.ok) return;
+        const json = await res.json();
+  
+        const now = new Date();
+        const minutesUntil = (iso: string) =>
+          Math.round((new Date(iso).getTime() - now.getTime()) / 60000);
+  
+        const next = (json.departures ?? [])
+          .filter((d: any) => d.line?.toLowerCase().includes(line.toLowerCase()))
+          .filter((d: any) => minutesUntil(d.time) >= 0)
+          .sort((a: any, b: any) => minutesUntil(a.time) - minutesUntil(b.time))[0];
+  
+        if (next?.time) {
+          const dep = new Date(next.time);
+          const hhmm = `${String(dep.getHours()).padStart(2, '0')}:${String(dep.getMinutes()).padStart(2, '0')}`;
+          writeChar(TRANSIT_TIME_CHAR_UUID, hhmm);
+          console.log('[BLE→ESP32] Transit:', line, 'next at', hhmm);
+        }
+      } catch (e) {
+        console.warn('[Transit push] fetch failed:', e);
+      }
     }
-    pushTransit();
-
-    // Re-push every minute so device always has fresh data
-    const id = setInterval(pushTransit, 60_000);
+  
+    pushTransitToDevice();
+  
+    // Re-push every 30 s — matches the device screen refresh rate
+    const id = setInterval(pushTransitToDevice, 30_000);
     return () => clearInterval(id);
-  }, [bleStatus, writeChar, lastSentTransit]);
+  }, [bleStatus, writeChar]); 
 
   // ── Recommendations ──────────────────────────────────────────────────────
   const loadRecs = useCallback(async (tk: string, mood: Mood) => {
