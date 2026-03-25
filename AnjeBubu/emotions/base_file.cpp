@@ -71,6 +71,8 @@ int stepsNew = 0;
 bool stateOld = false;
 bool stateNew = false;
 unsigned long lastStepTime = 0;
+unsigned long lastRawDetectMs = 0;
+static const unsigned long MAX_STEP_INTERVAL_MS = 1500;
 
 // For display/debug
 float lastAx = 0.0f, lastAy = 0.0f, lastAz = 0.0f;
@@ -255,9 +257,9 @@ static const int16_t musicTextW = 240 - musicTextX - 4;
 
 static int16_t musicScrollX = 0;
 static uint32_t lastMusicScrollMs = 0;
-static const uint32_t MUSIC_SCROLL_INTERVAL_MS = 140;
-static const int16_t MUSIC_SCROLL_STEP = 2;
-static const int16_t MUSIC_GAP_PX = 20;
+static const uint32_t MUSIC_SCROLL_INTERVAL_MS = 33;
+static const int16_t MUSIC_SCROLL_STEP = 1;
+static const int16_t MUSIC_GAP_PX = 60;
 
 /* ===================== Heart-rate processing ===================== */
 static const uint32_t HR_SAMPLE_MS  = 10;
@@ -282,6 +284,18 @@ int bpmHist[BPM_AVG_COUNT] = {0};
 int bpmHistIdx = 0;
 int bpmHistUsed = 0;
 
+// Finger-on-sensor detection
+static bool fingerOn = false;
+static uint32_t fingerLowMs = 0;
+static const float FINGER_ON_THRESH  = 30.0f;  // hrPeak must exceed this to confirm finger
+static const float FINGER_OFF_THRESH = 12.0f;  // hrPeak must drop below this to lose finger
+static const uint32_t FINGER_OFF_DEBOUNCE_MS = 1500; // ms hrPeak must stay low before clearing
+
+// HR waveform display buffer (one sample per HR_SAMPLE_MS, wraps circularly)
+static const int HR_WAVE_SIZE = 240;
+static int16_t hrWaveBuf[HR_WAVE_SIZE];
+static int hrWaveIdx = 0;
+
 /* ===================== Cached watch UI values ===================== */
 static int lastDrawnSteps = -1;
 static int lastDrawnBPM = -999;
@@ -302,6 +316,7 @@ static void pollBattery();
 static void updateHrCharacteristic();
 static void drawMusicUI();
 static void drawCommuteUI();
+static void drawHrWaveform();
 
 /* ===================== Helpers ===================== */
 static int averageBPM(int newBpm) {
@@ -701,14 +716,11 @@ static void initBLE() {
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->stop();
 
-  // Advertisement packet budget: 31 bytes max.
-  // Flags(3) + Name "Commubu"(9) + 128-bit UUID(18) = 30 bytes — fits exactly.
-  // Do NOT add manufacturer data here; it would push to 36 bytes and NimBLE
-  // would silently truncate the UUID, making the device unscannable by service UUID.
   NimBLEAdvertisementData ad;
   ad.setFlags(0x06);
   ad.setName(BLE_NAME);
   ad.addServiceUUID(SERVICE_UUID);
+  ad.setManufacturerData("TINY");
 
   adv->setAdvertisementData(ad);
   adv->start();
@@ -720,18 +732,20 @@ static void initBLE() {
 struct DebouncedButton {
   uint8_t pin;
   bool stableState;
-  bool lastStableState;
   bool lastRaw;
   uint32_t lastChangeMs;
+  bool _fell;
+  bool _rose;
 
   void begin(uint8_t p) {
     pin = p;
     pinMode(pin, INPUT_PULLUP);
     bool raw = digitalRead(pin);
     stableState = raw;
-    lastStableState = raw;
     lastRaw = raw;
     lastChangeMs = millis();
+    _fell = false;
+    _rose = false;
   }
 
   void update() {
@@ -743,12 +757,25 @@ struct DebouncedButton {
     }
 
     if ((millis() - lastChangeMs) >= DEBOUNCE_MS) {
-      lastStableState = stableState;
-      stableState = raw;
+      if (raw != stableState) {
+        bool prev = stableState;
+        stableState = raw;
+        if (prev == HIGH && raw == LOW)  _fell = true;
+        if (prev == LOW  && raw == HIGH) _rose = true;
+      }
     }
   }
 
-  bool fell() const { return (lastStableState == HIGH && stableState == LOW); }
+  bool fell() {
+    if (_fell) { _fell = false; return true; }
+    return false;
+  }
+
+  bool rose() {
+    if (_rose) { _rose = false; return true; }
+    return false;
+  }
+
   bool pressed() const { return stableState == LOW; }
 };
 
@@ -937,6 +964,45 @@ static void updateMusicBar(bool force) {
   int16_t drawX = musicTextX - musicScrollX;
   tft.setCursor(drawX, musicBarTextY);
   tft.print(track);
+  // Second copy for seamless circular loop
+  tft.setCursor(drawX + textW + MUSIC_GAP_PX, musicBarTextY);
+  tft.print(track);
+}
+
+static void drawHrWaveform() {
+  // Draw only in the center BPM column (x=80-159, 80px wide)
+  const int16_t gX = 80;
+  const int16_t gW = 80;
+  const int16_t gY = 215;
+  const int16_t gH = 22;
+
+  tft.fillRect(gX, gY, gW, gH, ST77XX_BLACK);
+
+  // Only draw waveform when a finger is detected
+  if (!fingerOn) return;
+
+  // Auto-scale over the last gW samples
+  int16_t vMin = 0, vMax = 0;
+  for (int i = 0; i < gW; i++) {
+    int idx = (hrWaveIdx - gW + i + HR_WAVE_SIZE) % HR_WAVE_SIZE;
+    if (i == 0) { vMin = vMax = hrWaveBuf[idx]; }
+    else {
+      if (hrWaveBuf[idx] < vMin) vMin = hrWaveBuf[idx];
+      if (hrWaveBuf[idx] > vMax) vMax = hrWaveBuf[idx];
+    }
+  }
+  int16_t range = vMax - vMin;
+  if (range < 4) range = 4;
+
+  // Draw oldest→newest left→right inside the center column
+  for (int x = 0; x < gW; x++) {
+    int idx = (hrWaveIdx - gW + x + HR_WAVE_SIZE) % HR_WAVE_SIZE;
+    int16_t val = hrWaveBuf[idx];
+    int16_t y = gY + gH - 1 - (int16_t)((int32_t)(val - vMin) * (gH - 1) / range);
+    if (y < gY) y = gY;
+    if (y >= gY + gH) y = gY + gH - 1;
+    tft.drawPixel(gX + x, y, FACE_GREEN);
+  }
 }
 
 static void drawWatchFaceStatic() {
@@ -947,7 +1013,9 @@ static void drawWatchFaceStatic() {
   updateWatchName(true);                                     // y=150-169
   tft.fillRect(0, 170, tft.width(), 2, ST77XX_BLACK);       // y=170-171 gap
   updateWatchTime(true);                                     // y=172-213
-  tft.fillRect(0, 214, tft.width(), 38, ST77XX_BLACK);      // y=214-251 (gap + stats label zone)
+  tft.fillRect(0, 214, tft.width(), 24, ST77XX_BLACK);      // y=214-237 gap (graph zone)
+  drawHrWaveform();                                          // y=215-236 HR waveform
+  tft.fillRect(0, 237, tft.width(), 15, ST77XX_BLACK);      // y=237-251 stats label zone
   drawWatchStatsLabels();
   drawWatchStatsValues(true);                                // y=252-285
   tft.fillRect(0, 286, tft.width(), 2, ST77XX_BLACK);       // y=286-287 gap
@@ -1470,10 +1538,15 @@ static void accelStepUpdate(bool& didNewStep) {
   unsigned long currentTime = millis();
   if (total_new > NEW_THRESH_UP && !stateNew) {
     if (currentTime - lastStepTime > (unsigned long)MIN_STEP_TIME) {
-      stepsNew++;
+      bool confirmedWalk = (lastRawDetectMs != 0 &&
+                            (currentTime - lastRawDetectMs) < MAX_STEP_INTERVAL_MS);
+      lastRawDetectMs = currentTime;
       lastStepTime = currentTime;
       stateNew = true;
-      didNewStep = true;
+      if (confirmedWalk) {
+        stepsNew++;
+        didNewStep = true;
+      }
     }
   } else if (total_new < NEW_THRESH_LOW) {
     stateNew = false;
@@ -1495,6 +1568,10 @@ static void updateHeartRate() {
 
   // Slightly lighter smoothing
   hrLp = 0.75f * hrLp + 0.25f * ac;
+
+  // Store in waveform buffer for display
+  hrWaveBuf[hrWaveIdx] = (int16_t)(hrLp);
+  hrWaveIdx = (hrWaveIdx + 1) % HR_WAVE_SIZE;
 
   float mag = fabsf(hrLp);
   if (mag > hrPeak) hrPeak = mag;
@@ -1529,12 +1606,31 @@ static void updateHeartRate() {
 
   hrPrev = hrLp;
 
-  // Keep last visible BPM longer so the UI does not instantly fall back to "--"
-  if (lastBeatMs != 0 && (now - lastBeatMs) > 5000) {
-    currentBPM = 0;
+  // Finger detection based on signal amplitude (hrPeak)
+  if (hrPeak > FINGER_ON_THRESH) {
+    fingerOn = true;
+    fingerLowMs = 0;
+  } else if (hrPeak < FINGER_OFF_THRESH) {
+    if (fingerLowMs == 0) fingerLowMs = now;
+    if ((now - fingerLowMs) > FINGER_OFF_DEBOUNCE_MS) {
+      if (fingerOn) {
+        // Finger just removed — reset everything
+        fingerOn = false;
+        displayBPM = 0;
+        currentBPM = 0;
+        lastBeatMs = 0;
+        for (int i = 0; i < BPM_AVG_COUNT; i++) bpmHist[i] = 0;
+        bpmHistIdx = 0;
+        bpmHistUsed = 0;
+      }
+    }
+  } else {
+    // hrPeak in dead-band: don't change fingerLowMs timer
   }
-  if (lastBeatMs != 0 && (now - lastBeatMs) > 8000) {
+
+  if (!fingerOn) {
     displayBPM = 0;
+    currentBPM = 0;
   }
 }
 
@@ -1735,6 +1831,7 @@ void loop() {
       updateDebugHRonTFT();
       updateDebugStepsOnTFT();
     } else if (uiMode == UI_WATCH) {
+      drawHrWaveform();
       drawWatchStatsValues(false);
       updateWatchName(false);
       updateWatchTime(false);

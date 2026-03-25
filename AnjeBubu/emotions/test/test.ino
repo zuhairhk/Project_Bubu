@@ -732,18 +732,20 @@ static void initBLE() {
 struct DebouncedButton {
   uint8_t pin;
   bool stableState;
-  bool lastStableState;
   bool lastRaw;
   uint32_t lastChangeMs;
+  bool _fell;
+  bool _rose;
 
   void begin(uint8_t p) {
     pin = p;
     pinMode(pin, INPUT_PULLUP);
     bool raw = digitalRead(pin);
     stableState = raw;
-    lastStableState = raw;
     lastRaw = raw;
     lastChangeMs = millis();
+    _fell = false;
+    _rose = false;
   }
 
   void update() {
@@ -755,12 +757,25 @@ struct DebouncedButton {
     }
 
     if ((millis() - lastChangeMs) >= DEBOUNCE_MS) {
-      lastStableState = stableState;
-      stableState = raw;
+      if (raw != stableState) {
+        bool prev = stableState;
+        stableState = raw;
+        if (prev == HIGH && raw == LOW)  _fell = true;
+        if (prev == LOW  && raw == HIGH) _rose = true;
+      }
     }
   }
 
-  bool fell() const { return (lastStableState == HIGH && stableState == LOW); }
+  bool fell() {
+    if (_fell) { _fell = false; return true; }
+    return false;
+  }
+
+  bool rose() {
+    if (_rose) { _rose = false; return true; }
+    return false;
+  }
+
   bool pressed() const { return stableState == LOW; }
 };
 
