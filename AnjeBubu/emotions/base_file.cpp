@@ -701,11 +701,14 @@ static void initBLE() {
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->stop();
 
+  // Advertisement packet budget: 31 bytes max.
+  // Flags(3) + Name "Commubu"(9) + 128-bit UUID(18) = 30 bytes — fits exactly.
+  // Do NOT add manufacturer data here; it would push to 36 bytes and NimBLE
+  // would silently truncate the UUID, making the device unscannable by service UUID.
   NimBLEAdvertisementData ad;
   ad.setFlags(0x06);
   ad.setName(BLE_NAME);
   ad.addServiceUUID(SERVICE_UUID);
-  ad.setManufacturerData("TINY");
 
   adv->setAdvertisementData(ad);
   adv->start();
