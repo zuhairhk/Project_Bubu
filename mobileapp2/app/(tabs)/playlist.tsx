@@ -56,7 +56,7 @@ const MOOD_LABEL: Record<string, string> = {
   angry: 'Angry', sad: 'Sad',        sleepy: 'Sleepy',
 };
 
-const BACKEND_URL  = 'https://ac00-173-35-246-197.ngrok-free.app';
+const BACKEND_URL  = 'https://ffed-141-117-117-125.ngrok-free.app';
 const PREDICT_URL  = `${BACKEND_URL}/api/ml/predict`;
 const PREDICT_MS   = 60_000;
 
