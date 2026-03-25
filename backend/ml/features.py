@@ -1,5 +1,5 @@
 """
-Feature engineering — 6-mood classifier with Spotify audio features.
+Features: 6-mood classifier with Spotify audio features.
 
 Feature vector (10 features):
   [0]  heart_rate             — raw BPM
@@ -10,7 +10,7 @@ Feature vector (10 features):
   [5]  is_rush_hour           — binary rush hour flag
   [6]  spotify_energy         — track energy (0=calm, 1=intense). 0.5 if no Spotify
   [7]  spotify_valence        — track positivity (0=sad, 1=happy). 0.5 if no Spotify
-  [8]  spotify_tempo_norm     — track BPM normalized to 0–1 range (0=60bpm, 1=200bpm)
+  [8]  spotify_tempo_norm     — track BPM normalized to 0-1 range (0=60bpm, 1=200bpm)
   [9]  has_spotify            — binary: 1 if Spotify data present
 
 Mood → label encoding:
