@@ -171,7 +171,7 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         }, SCAN_TIMEOUT);
 
         manager.startDeviceScan(
-          [SERVICE_UUID],
+          null,   // scan all — 128-bit UUID filter is unreliable on Android
           { allowDuplicates: false },
           (err, dev) => {
             if (err) {

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
   ScrollView,
@@ -64,7 +65,7 @@ function trainColor(mins: number) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { status, deviceName, data, connect, disconnect, error } = useBle();
+  const { status, deviceName, data, connect, disconnect, error, clearError } = useBle();
   const { mood } = useMood();
 
   const [nextTrain,    setNextTrain]    = useState<{ dest: string; mins: number; line: string } | null>(null);
@@ -83,13 +84,15 @@ export default function HomeScreen() {
   const moodColor  = activeMood ? (MOOD_COLOR[activeMood] ?? C.blue) : C.textTert;
   const moodLabel  = activeMood ? (MOOD_LABEL[activeMood] ?? activeMood) : 'Not detected';
 
-  // Load saved transit line
-  useEffect(() => {
-    import('@react-native-async-storage/async-storage').then(async m => {
-      const val = await m.default.getItem(STORAGE_KEY);
-      if (val) setTrainLine(val);
-    });
-  }, []);
+  // Re-read transit line every time this tab is focused so changes from the Commute tab are picked up
+  useFocusEffect(
+    useCallback(() => {
+      import('@react-native-async-storage/async-storage').then(async m => {
+        const val = await m.default.getItem(STORAGE_KEY);
+        setTrainLine(val ?? null);
+      });
+    }, [])
+  );
 
   // Fetch next departure
   const fetchTrain = useCallback(async () => {
@@ -118,8 +121,12 @@ export default function HomeScreen() {
   }, [fetchTrain]);
 
   const handleBle = () => {
-    if (error) { Alert.alert('BLE Error', error, [{ text: 'OK' }]); return; }
-    isConnected ? disconnect() : connect();
+    if (isConnected) { disconnect(); return; }
+    if (error) {
+      Alert.alert('BLE Error', error, [{ text: 'Retry', onPress: () => { clearError(); connect(); } }, { text: 'Cancel' }]);
+      return;
+    }
+    connect();
   };
 
   return (
