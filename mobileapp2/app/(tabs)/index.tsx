@@ -10,6 +10,7 @@ import { useBle } from '@/lib/BleContext';
 import { useMood } from '@/lib/MoodContext';
 import { useNowPlaying } from '@/lib/NowPlayingContext';
 import { NowPlaying } from '@/lib/spotifyApi';
+import LottieView from 'lottie-react-native';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
@@ -241,6 +242,15 @@ export default function HomeScreen() {
         {/* ── Now Playing ── shown when Spotify is connected in the Playlist tab */}
         {nowPlaying && <NowPlayingCard np={nowPlaying} />}
 
+        {/* ── Lottie Test ── */}
+        <View style={{ alignItems: 'center', marginBottom: 16 }}>
+          <LottieView
+            source={require('@/assets/animations/redtest.json')}
+            autoPlay
+            loop
+            style={{ width: 150, height: 150 }}
+          />
+        </View>
         {/* ── Mood hero card ── */}
         <View style={S.moodCard}>
           <View style={S.moodCardLeft}>
