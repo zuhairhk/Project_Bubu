@@ -15,17 +15,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useBle } from '@/lib/BleContext';
 
 const C = {
-  bg:       '#F2F2F7',
-  card:     '#FFFFFF',
-  text:     '#000000',
-  textSec:  '#3C3C43',
-  textTert: '#8E8E93',
+  bg:       '#fff8e9ff',
+  card:     '#e5f0aeff',
+  text:     '#604848',
+  textSec:  '#604848',
+  textTert: '#696561ff',
   sep:      '#C6C6C8',
-  blue:     '#007AFF',
+  blue:     '#468849',
   green:    '#34C759',
   orange:   '#FF9500',
-  red:      '#FF3B30',
-  indigo:   '#5856D6',
+  red:      '#468849',
+  purple:   '#AF52DE',
+  indigo:   '#468849',
+  spotify:  '#1DB954',
 };
 
 const cardShadow = {
@@ -41,13 +43,13 @@ const STORAGE_KEY = 'commute_selected_line';
 const REFRESH_MS  = 30_000;
 
 const GO_LINES = [
-  { id: 'Lakeshore East', label: 'Lakeshore East', color: '#FF3B30' },
-  { id: 'Lakeshore West', label: 'Lakeshore West', color: '#FF3B30' },
-  { id: 'Kitchener',      label: 'Kitchener',       color: '#34C759' },
-  { id: 'Barrie',         label: 'Barrie',          color: '#007AFF' },
-  { id: 'Stouffville',    label: 'Stouffville',     color: '#AF52DE' },
-  { id: 'Richmond Hill',  label: 'Richmond Hill',   color: '#32ADE6' },
-  { id: 'Milton',         label: 'Milton',          color: '#FF9500' },
+  { id: 'Lakeshore East', label: 'Lakeshore East', color: '#ef4038' },
+  { id: 'Lakeshore West', label: 'Lakeshore West', color: '#912843' },
+  { id: 'Kitchener',      label: 'Kitchener',       color: '#018a4a' },
+  { id: 'Barrie',         label: 'Barrie',          color: '#0467a2' },
+  { id: 'Stouffville',    label: 'Stouffville',     color: '#82562e' },
+  { id: 'Richmond Hill',  label: 'Richmond Hill',   color: '#00ade8' },
+  { id: 'Milton',         label: 'Milton',          color: '#F68635' },
 ];
 
 interface Departure {

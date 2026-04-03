@@ -6,7 +6,7 @@ const palette = {
   blue500: '#4D96FF',
   blue700: '#2563EB',
   teal400: '#38BDF8',
-  slate50:  '#F8FAFC',
+  slate50:  '#F0F0D8',
   slate100: '#F1F5F9',
   slate200: '#E2E8F0',
   slate300: '#CBD5E1',
@@ -22,10 +22,10 @@ const palette = {
 
 export const Colors = {
   light: {
-    text:           palette.slate800,
+    text:           '#604848',
     subtext:        palette.slate400,
-    background:     palette.slate50,
-    card:           '#FFFFFF',
+    background:     '#F0F0D8',
+    card:           '#d5e09c',
     cardBorder:     palette.slate200,
     tint:           palette.blue500,
     accent:         palette.teal400,

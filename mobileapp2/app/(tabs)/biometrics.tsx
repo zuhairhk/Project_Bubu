@@ -5,7 +5,21 @@ import { Ionicons } from '@expo/vector-icons';
 import { useBle } from '@/lib/BleContext';
 
 const STEP_GOAL = 10_000;
-const C = { bg:'#F2F2F7',card:'#FFFFFF',text:'#000000',textSec:'#3C3C43',textTert:'#8E8E93',sep:'#C6C6C8',blue:'#007AFF',green:'#34C759',orange:'#FF9500',red:'#FF3B30',indigo:'#5856D6',teal:'#32ADE6' };
+const C = {
+  bg:       '#fff8e9ff',
+  card:     '#e5f0aeff',
+  text:     '#604848',
+  textSec:  '#604848',
+  textTert: '#696561ff',
+  sep:      '#3d7c5bff',
+  blue:     '#5234ffff',
+  green:    '#67d20fff',
+  orange:   '#ff0040ff',
+  red:      '#468849',
+  purple:   '#AF52DE',
+  indigo:   '#468849',
+  spotify:  '#1DB954',
+};
 const cardShadow = { shadowColor:'#000',shadowOpacity:0.06,shadowRadius:12,shadowOffset:{width:0,height:2},elevation:3 };
 
 function NativeNotAvailableCard() {
@@ -209,14 +223,6 @@ export default function BiometricsScreen() {
         <StepsCard steps={steps} connected={isConnected}/>
         <BatteryCard percent={batteryPercent} voltage={batteryVoltage} connected={isConnected}/>
 
-        <View style={[S.card,cardShadow]}>
-          <View style={S.cardTopRow}>
-            <Text style={S.cardLabel}>Sleep</Text>
-            <View style={[S.iconChip,{backgroundColor:C.teal+'15'}]}><Ionicons name="moon-outline" size={14} color={C.teal}/></View>
-          </View>
-          <Text style={[S.cardBigValue,{color:C.textTert}]}>--</Text>
-          <Text style={S.cardSub}>Sleep tracking coming soon</Text>
-        </View>
 
         <BleDebugCard status={status} error={error} data={data} nativeBleAvailable={nativeBleAvailable}/>
         <View style={{height:110}}/>
@@ -258,5 +264,5 @@ const S = StyleSheet.create({
   remainText:{fontSize:12,color:C.textTert},
   battRow:{flexDirection:'row',alignItems:'baseline',gap:10},
   battVolt:{fontSize:14,color:C.textTert,fontWeight:'500',marginBottom:4},
-  teal:C.teal as any,
+  
 });

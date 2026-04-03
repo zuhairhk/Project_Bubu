@@ -14,24 +14,24 @@ import LottieView from 'lottie-react-native';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
-  bg:       '#F2F2F7',
-  card:     '#FFFFFF',
-  text:     '#000000',
-  textSec:  '#3C3C43',
-  textTert: '#8E8E93',
+  bg:       '#fff8e9ff',
+  card:     '#e5f0aeff',
+  text:     '#604848',
+  textSec:  '#604848',
+  textTert: '#696561ff',
   sep:      '#C6C6C8',
-  blue:     '#007AFF',
+  blue:     '#468849',
   green:    '#34C759',
   orange:   '#FF9500',
-  red:      '#FF3B30',
+  red:      '#468849',
   purple:   '#AF52DE',
-  indigo:   '#5856D6',
+  indigo:   '#468849',
   spotify:  '#1DB954',
 };
 
 const MOOD_COLOR: Record<string, string> = {
-  happy:    '#FF9500', neutral:  '#007AFF', stressed: '#FF3B30',
-  angry:    '#FF3B30', sad:      '#5856D6', sleepy:   '#AF52DE',
+  happy:    '#efc302ff', neutral:  '#ff8c9bff', stressed: '#ff7f30ff',
+  angry:    '#ff3041ff', sad:      '#255bffff', sleepy:   '#8d3bf0ff',
 };
 const MOOD_LABEL: Record<string, string> = {
   happy: 'Happy', neutral: 'Neutral', stressed: 'Stressed',

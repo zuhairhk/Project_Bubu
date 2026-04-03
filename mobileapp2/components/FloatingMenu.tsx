@@ -23,7 +23,7 @@ function BleStatusDot() {
   const color =
     status === 'connected' ? '#4ADE80' :
     status === 'scanning' || status === 'connecting' ? '#FBBF24' :
-    '#CBD5E1';
+    '#FFF8E9';
   return <View style={[styles.statusDot, { backgroundColor: color }]} />;
 }
 
@@ -55,14 +55,19 @@ export default function FloatingMenu() {
               {({ pressed }) => (
                 <LinearGradient
                   colors={isActive
-                    ? ['#DBEAFE', '#BFDBFE', '#93C5FD']
+                    ? ['#FFF8E9', '#E5F0AE', '#B7D7A8']
                     : pressed
-                    ? ['#E6F2FA', '#D8EBF7', '#BCD6E6']
-                    : ['#F8FCFF', '#E6F2FA', '#C9E0EE']}
-                  style={[styles.itemBtn, isActive && styles.itemBtnActive, pressed && styles.pressed]}
+                    ? ['#FFF8E9', '#E5F0AE', '#D9E69A']
+                    : ['#FFF8E9', '#FEFFE9', '#E5F0AE']}
+                  style={[
+                    styles.itemBtn,
+                    isActive && styles.itemBtnActive,
+                    pressed && styles.pressed,
+                    styles.itemBtnShadow
+                  ]}
                 >
-                  <Ionicons name={item.icon as any} size={20} color={isActive ? '#2563EB' : '#3A5F7D'} />
-                  <Text style={[styles.itemLabel, isActive && { color: '#2563EB' }]}>{item.label}</Text>
+                  <Ionicons name={item.icon as any} size={20} color={isActive ? '#A3C47C' : '#468849'} />
+                  <Text style={[styles.itemLabel, { color: isActive ? '#A3C47C' : '#604848' }]}>{item.label}</Text>
                 </LinearGradient>
               )}
             </Pressable>
@@ -75,10 +80,10 @@ export default function FloatingMenu() {
         <Pressable onPress={toggle}>
           {({ pressed }) => (
             <LinearGradient
-              colors={pressed ? ['#E6F2FA', '#D8EBF7', '#BCD6E6'] : ['#F8FCFF', '#E6F2FA', '#C9E0EE']}
+              colors={pressed ? ['#fff2d7ff', '#eef7bfff', '#d9e69aff'] : ['#FFF8E9', '#feffe9ff', '#E5F0AE']}
               style={[styles.fabBtn, pressed && styles.pressed]}
             >
-              <Ionicons name={open ? 'close' : 'add'} size={28} color="#3A5F7D" />
+              <Ionicons name={open ? 'close' : 'add'} size={28} color="#604848" />
               <BleStatusDot />
             </LinearGradient>
           )}
@@ -109,7 +114,7 @@ const styles = StyleSheet.create({
     height:         FAB_SIZE,
     borderRadius:   FAB_SIZE / 2,
     borderWidth:    1,
-    borderColor:    '#B6D0E3',
+    borderColor:    '#604848',
     justifyContent: 'center',
     alignItems:     'center',
   },
@@ -121,7 +126,7 @@ const styles = StyleSheet.create({
     height:       8,
     borderRadius: 4,
     borderWidth:  1.5,
-    borderColor:  '#fff',
+    borderColor:  '#FFF8E9',
   },
   menuItem: {
     position: 'absolute',
@@ -132,22 +137,23 @@ const styles = StyleSheet.create({
     width:          ITEM_SIZE,
     height:         ITEM_SIZE,
     borderRadius:   ITEM_SIZE / 2,
-    borderWidth:    1,
-    borderColor:    '#B6D0E3',
+    borderWidth:    0.5,
+    borderColor:    '#604848',
     alignItems:     'center',
     justifyContent: 'center',
-    shadowColor:    '#000',
-    shadowOpacity:  0.10,
-    shadowRadius:   8,
-    shadowOffset:   { width: 0, height: 4 },
-    elevation:      4,
   },
-  itemBtnActive: { borderColor: '#93C5FD' },
+  itemBtnActive: { borderColor: '#B7D7A8' },
+  itemBtnShadow: {
+    shadowColor:   '#604848',
+    shadowOpacity: 0.22,
+    shadowRadius:  12,
+    shadowOffset:  { width: 0, height: 8 },
+    elevation:     10,
+  },
   itemLabel: {
     fontSize:   7,
     fontWeight: '600',
-    color:      '#3A5F7D',
     marginTop:  1,
   },
-  pressed: { opacity: 0.85 },
+  pressed: { opacity: 1 },
 });
