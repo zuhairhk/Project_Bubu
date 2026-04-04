@@ -38,7 +38,7 @@ const MOOD_LABEL: Record<string, string> = {
   angry: 'Angry', sad: 'Sad',        sleepy: 'Sleepy',
 };
 
-const TRANSIT_URL = 'https://ffed-141-117-117-125.ngrok-free.app/api/transit/next';
+const TRANSIT_URL = 'https://c3db-2607-fea8-fd90-7a41-8efa-38bb-2d75-67ba.ngrok-free.app/api/transit/next';
 const STORAGE_KEY = 'commute_selected_line';
 
 function minutesUntil(iso: string) {

@@ -51,7 +51,7 @@ const MOOD_LABEL: Record<string, string> = {
   angry: 'Angry', sad: 'Sad', sleepy: 'Sleepy',
 };
 
-const BACKEND_URL  = 'https://ffed-141-117-117-125.ngrok-free.app';
+const BACKEND_URL  = 'https://c3db-2607-fea8-fd90-7a41-8efa-38bb-2d75-67ba.ngrok-free.app';
 const PREDICT_URL  = `${BACKEND_URL}/api/ml/predict`;
 const PREDICT_MS   = 5 * 60 * 1000;
 const STORAGE_KEY  = 'commute_selected_line';
@@ -266,7 +266,7 @@ export default function PlaylistScreen() {
       writeChar(TRANSIT_LINE_CHAR_UUID, line);
       try {
         const res = await fetch(
-          'https://ffed-141-117-117-125.ngrok-free.app/api/transit/next',
+          'https://c3db-2607-fea8-fd90-7a41-8efa-38bb-2d75-67ba.ngrok-free.app/api/transit/next',
           { headers: { 'ngrok-skip-browser-warning': '1' } }
         );
         if (!res.ok) return;

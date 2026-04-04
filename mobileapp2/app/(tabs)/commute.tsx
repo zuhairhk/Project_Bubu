@@ -38,7 +38,7 @@ const cardShadow = {
   elevation:     3,
 };
 
-const API_URL     = 'https://ffed-141-117-117-125.ngrok-free.app/api/transit/next';
+const API_URL     = 'https://c3db-2607-fea8-fd90-7a41-8efa-38bb-2d75-67ba.ngrok-free.app/api/transit/next';
 const STORAGE_KEY = 'commute_selected_line';
 const REFRESH_MS  = 30_000;
 
