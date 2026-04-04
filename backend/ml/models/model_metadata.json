@@ -1,18 +1,18 @@
 {
-  "trained_at": "2026-03-25T20:35:03.285275",
-  "total_samples": 720,
-  "real_samples": 120,
+  "trained_at": "2026-04-04T02:22:40.929739",
+  "total_samples": 730,
+  "real_samples": 130,
   "synthetic_samples": 600,
   "mood_counts": {
-    "happy": 120,
+    "happy": 130,
     "neutral": 120,
     "stressed": 120,
     "angry": 120,
     "sad": 120,
     "sleepy": 120
   },
-  "cv_f1_weighted_mean": 0.9917,
-  "cv_f1_weighted_std": 0.0068,
+  "cv_f1_weighted_mean": 0.9918,
+  "cv_f1_weighted_std": 0.0067,
   "features": [
     "heart_rate",
     "hr_normalized",
