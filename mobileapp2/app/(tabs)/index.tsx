@@ -289,7 +289,7 @@ export default function HomeScreen() {
   
 
   {skottieAnimation && animationSize ? (
-    <View style={{ width: '92%', height: 150 }}>
+    <View style={{ width: '85%', height: 150 }}>
       <Canvas style={{ flex: 1 }}>
         <FitBox
           src={rect(
@@ -298,7 +298,7 @@ export default function HomeScreen() {
     animationSize.width * crop.w,
     animationSize.height * crop.h
   )}
-  dst={rect(0, 0, 310, 150)}
+  dst={rect(0, 0, 290, 150)}
         >
           <Skottie animation={skottieAnimation} frame={frame} />
         </FitBox>
@@ -316,10 +316,10 @@ export default function HomeScreen() {
             <Text style={S.moodCardLabel}>Current Mood</Text>
             <Text style={[S.moodCardValue, { color: moodColor }]}>{moodLabel}</Text>
             <Text style={S.moodCardNote}>
-              {activeMood ? 'Override in Playlist tab' : 'Detected from device or set manually'}
+              {activeMood ? 'Change how you\'re feeling in the playlist tab!' : 'Detected from device or set manually'}
             </Text>
           </View>
-          <View style={[S.moodEmojiBubble, { backgroundColor: moodColor + '18' }]}>
+          {/* <View style={[S.moodEmojiBubble, { backgroundColor: moodColor + '18' }]}>
             <Text style={S.moodEmojiText}>
               {activeMood === 'happy'    ? '( ^‿^ )'   :
                activeMood === 'sad'     ? '( ; _ ; )' :
@@ -329,7 +329,7 @@ export default function HomeScreen() {
                '( ·_· )'}
             </Text>
             <Text style={[S.moodEmojiNote, { color: moodColor }]}>placeholder art</Text>
-          </View>
+          </View>*/}
         </View>
 
         {/* ── Steps + Heart Rate ── */}

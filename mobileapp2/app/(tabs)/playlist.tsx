@@ -182,14 +182,41 @@ const R = StyleSheet.create({
 function MoodChip({ mood, active, onPress }: { mood: Mood; active: boolean; onPress: () => void }) {
   const col = MOOD_COLOR[mood] ?? C.blue;
   return (
-    <Pressable onPress={onPress} style={[MC.chip, active && { backgroundColor: col + '15', borderColor: col, borderWidth: 1.5 }]}>
-      <Text style={[MC.text, active && { color: col, fontWeight: '700' }]}>{MOOD_LABEL[mood]}</Text>
-    </Pressable>
+    <View style={MC.cell}>
+      <Pressable
+        onPress={onPress}
+        style={[
+          MC.chip,
+          active && { backgroundColor: col + '15', borderColor: col, borderWidth: 1.5 }
+        ]}
+      >
+        <Text style={[MC.text, active && { color: col, fontWeight: '700' }]}>
+          {MOOD_LABEL[mood]}
+        </Text>
+      </Pressable>
+    </View>
   );
 }
 const MC = StyleSheet.create({
-  chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: C.bg, borderWidth: 1, borderColor: C.sep },
-  text: { fontSize: 13, color: C.textSec, fontWeight: '500' },
+  cell: {
+    width: '31.5%',
+  },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: C.bg,
+    borderWidth: 1,
+    borderColor: C.sep,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  text: {
+    fontSize: 13,
+    color: C.textSec,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
 });
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -466,7 +493,7 @@ export default function PlaylistScreen() {
         </View>
 
         {/* Override chips */}
-        <Text style={S.sectionLabel}>OVERRIDE MOOD</Text>
+        <Text style={S.sectionLabel}>HOW ARE YOU FEELING?</Text>
         <View style={S.chipsRow}>
           {MOOD_LABELS.map(m => (
             <MoodChip key={m} mood={m} active={activeMood === m && moodSource === 'manual'} onPress={() => handleManualMood(m)} />
@@ -579,7 +606,13 @@ const S = StyleSheet.create({
   moodColorDotInner: { width: 24, height: 24, borderRadius: 12 },
 
   sectionLabel: { fontSize: 11, fontWeight: '700', color: C.textTert, letterSpacing: 1, marginBottom: 10 },
-  chipsRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 24 },
+  chipsRow: {
+  flexDirection: 'row',
+  flexWrap: 'wrap',
+  justifyContent: 'space-between',
+  rowGap: 8,
+  marginBottom: 24,
+},
 
   connectCard:    { backgroundColor: C.card, borderRadius: 20, padding: 28, alignItems: 'center', marginTop: 8 },
   spotifyIconBox: { width: 64, height: 64, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },

@@ -15,9 +15,9 @@ const C = {
   blue:     '#5234ffff',
   green:    '#67d20fff',
   orange:   '#ff0040ff',
-  red:      '#468849',
+  red:      '#f6cd39ff',
   purple:   '#AF52DE',
-  indigo:   '#468849',
+  indigo:   '#e157e6ff',
   spotify:  '#1DB954',
 };
 const cardShadow = { shadowColor:'#000',shadowOpacity:0.06,shadowRadius:12,shadowOffset:{width:0,height:2},elevation:3 };
@@ -224,7 +224,7 @@ export default function BiometricsScreen() {
         <BatteryCard percent={batteryPercent} voltage={batteryVoltage} connected={isConnected}/>
 
 
-        <BleDebugCard status={status} error={error} data={data} nativeBleAvailable={nativeBleAvailable}/>
+        {/* <BleDebugCard status={status} error={error} data={data} nativeBleAvailable={nativeBleAvailable}/> */}
         <View style={{height:110}}/>
       </ScrollView>
     </View>
