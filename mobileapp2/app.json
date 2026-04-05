@@ -4,14 +4,14 @@
     "slug": "commubuapp",
     "version": "2.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/commubu_app_icon.png",
     "scheme": "commubu-login",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/images/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#fff8e9"
     },
     "ios": {
       "supportsTablet": true,
