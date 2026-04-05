@@ -28,7 +28,7 @@
         <key>CFBundleURLSchemes</key>
         <array>
           <string>commubu-login</string>
-          <string>com.zuhairhk.commubu</string>
+          <string>com.amaanasim.commubu.dev</string>
         </array>
       </dict>
       <dict>
