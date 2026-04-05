@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet, ScrollView, Pressable, Alert, ActivityIndicator,
@@ -11,6 +11,7 @@ import { useMood } from '@/lib/MoodContext';
 import { useNowPlaying } from '@/lib/NowPlayingContext';
 import { NowPlaying } from '@/lib/spotifyApi';
 import LottieView from 'lottie-react-native';
+import { Canvas, Skia, Skottie, FitBox, rect } from "@shopify/react-native-skia";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
@@ -37,6 +38,8 @@ const MOOD_LABEL: Record<string, string> = {
   happy: 'Happy', neutral: 'Neutral', stressed: 'Stressed',
   angry: 'Angry', sad: 'Sad',        sleepy: 'Sleepy',
 };
+
+const angryJson = require('@/assets/animations/stressed3.json');
 
 const TRANSIT_URL = 'https://c3db-2607-fea8-fd90-7a41-8efa-38bb-2d75-67ba.ngrok-free.app/api/transit/next';
 const STORAGE_KEY = 'commute_selected_line';
@@ -137,6 +140,7 @@ export default function HomeScreen() {
   const { status, deviceName, data, connect, disconnect, error, clearError } = useBle();
   const { mood } = useMood();
   const { nowPlaying } = useNowPlaying();
+  
 
   const [nextTrain,    setNextTrain]    = useState<{ dest: string; mins: number; line: string } | null>(null);
   const [trainLine,    setTrainLine]    = useState<string | null>(null);
@@ -149,6 +153,12 @@ export default function HomeScreen() {
   const stepPct   = Math.min((steps / 10000) * 100, 100);
 
   const activeMood = mood ?? null;
+
+  const skottieAnimation = useMemo(() => {
+    return Skia.Skottie.Make(JSON.stringify(angryJson));
+  }, []);
+
+  const animationSize = skottieAnimation?.size();
   const moodColor  = activeMood ? (MOOD_COLOR[activeMood] ?? C.blue) : C.textTert;
   const moodLabel  = activeMood ? (MOOD_LABEL[activeMood] ?? activeMood) : 'Not detected';
 
@@ -242,16 +252,27 @@ export default function HomeScreen() {
         {/* ── Now Playing ── shown when Spotify is connected in the Playlist tab */}
         {nowPlaying && <NowPlayingCard np={nowPlaying} />}
 
-        {/* ── Lottie Test ── */}
+        {/* ── Skottie Test── */}
         <View style={[S.lottieCard, { marginBottom: 16 }]}>
-          <View style={S.glow} />
-          <LottieView
-            source={require('@/assets/animations/redtest.json')}
-            autoPlay
-            loop
-            style={{ width: 150, height: 150 }}
-          />
-        </View>
+  
+
+  {skottieAnimation && animationSize ? (
+    <View style={{ zIndex: 2 }}>
+      <Canvas style={{ width: 150, height: 150 }}>
+        <FitBox
+          src={rect(0, 0, animationSize.width, animationSize.height)}
+          dst={rect(10, 10, 100, 100)}
+        >
+          <Skottie animation={skottieAnimation} frame={0} />
+        </FitBox>
+      </Canvas>
+    </View>
+  ) : (
+    <View style={{ width: 150, height: 150, alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={{ color: '#fff' }}>Animation failed to load</Text>
+    </View>
+  )}
+</View>
         {/* ── Mood hero card ── */}
         <View style={S.moodCard}>
           <View style={S.moodCardLeft}>
@@ -409,16 +430,7 @@ export default function HomeScreen() {
 }
 
 const S = StyleSheet.create({
-    glow: {
-      position: 'absolute',
-      width: 150,
-      height: 150,
-      borderRadius: 75,
-      backgroundColor: 'rgba(255, 255, 255, 0.3)',
-      top: -12,
-      left: -12,
-      zIndex: -1,
-    },
+
     lottieCard: {
       backgroundColor: '#232323',
       borderRadius: 20,
@@ -429,6 +441,8 @@ const S = StyleSheet.create({
       width: '100%',
       alignSelf: 'center',
       paddingVertical: 1,
+      overflow: 'hidden',
+      position: 'relative',
     },
   root:   { flex: 1, backgroundColor: C.bg },
   scroll: { paddingHorizontal: 16, paddingTop: 8 },
