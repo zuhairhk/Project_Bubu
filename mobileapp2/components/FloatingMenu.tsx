@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+
+import React, { useState, useEffect } from 'react';
 import { View, Pressable, StyleSheet, Dimensions, Text } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useBle } from '@/lib/BleContext';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated';
 
 const { width } = Dimensions.get('window');
 
@@ -31,22 +33,37 @@ export default function FloatingMenu() {
   const router   = useRouter();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const openProgress = useSharedValue(0);
+
+  useEffect(() => {
+    openProgress.value = withTiming(open ? 1 : 0, { duration: 350 });
+  }, [open]);
 
   const toggle = () => setOpen(o => !o);
 
   return (
     <View style={styles.root} pointerEvents="box-none">
-      {/* Menu items — only rendered when open */}
-      {open && MENU_ITEMS.map((item, index) => {
+      {/* Menu items — always rendered, animated in/out */}
+      {MENU_ITEMS.map((item, index) => {
         const rad = (item.angle * Math.PI) / 180;
         const x = RADIUS * Math.cos(rad);
         const y = RADIUS * Math.sin(rad);
         const isActive = pathname === item.route || (item.route === '/(tabs)' && pathname === '/');
 
+        const animatedStyle = useAnimatedStyle(() => ({
+          transform: [
+            { translateX: openProgress.value * x },
+            { translateY: openProgress.value * y },
+            { scale: openProgress.value },
+          ],
+          opacity: openProgress.value,
+        }));
+
         return (
-          <View
+          <Animated.View
             key={index}
-            style={[styles.menuItem, { transform: [{ translateX: x }, { translateY: y }] }]}
+            style={[styles.menuItem, animatedStyle]}
+            pointerEvents={open ? 'auto' : 'none'}
           >
             <Pressable
               onPress={() => { toggle(); router.push(item.route); }}
@@ -71,7 +88,7 @@ export default function FloatingMenu() {
                 </LinearGradient>
               )}
             </Pressable>
-          </View>
+          </Animated.View>
         );
       })}
 
