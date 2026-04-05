@@ -243,7 +243,8 @@ export default function HomeScreen() {
         {nowPlaying && <NowPlayingCard np={nowPlaying} />}
 
         {/* ── Lottie Test ── */}
-        <View style={{ alignItems: 'center', marginBottom: 16 }}>
+        <View style={[S.lottieCard, { marginBottom: 16 }]}>
+          <View style={S.glow} />
           <LottieView
             source={require('@/assets/animations/redtest.json')}
             autoPlay
@@ -408,6 +409,27 @@ export default function HomeScreen() {
 }
 
 const S = StyleSheet.create({
+    glow: {
+      position: 'absolute',
+      width: 150,
+      height: 150,
+      borderRadius: 75,
+      backgroundColor: 'rgba(255, 255, 255, 0.3)',
+      top: -12,
+      left: -12,
+      zIndex: -1,
+    },
+    lottieCard: {
+      backgroundColor: '#232323',
+      borderRadius: 20,
+      borderWidth: 10,
+      borderColor: '#e5f0ae', // light green
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: '100%',
+      alignSelf: 'center',
+      paddingVertical: 1,
+    },
   root:   { flex: 1, backgroundColor: C.bg },
   scroll: { paddingHorizontal: 16, paddingTop: 8 },
 
