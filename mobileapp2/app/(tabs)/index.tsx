@@ -11,7 +11,8 @@ import { useMood } from '@/lib/MoodContext';
 import { useNowPlaying } from '@/lib/NowPlayingContext';
 import { NowPlaying } from '@/lib/spotifyApi';
 import LottieView from 'lottie-react-native';
-import { Canvas, Skia, Skottie, FitBox, rect } from "@shopify/react-native-skia";
+import { Canvas, Skia, Skottie, FitBox, rect, useClock } from "@shopify/react-native-skia";
+import { useDerivedValue } from 'react-native-reanimated';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
@@ -39,8 +40,22 @@ const MOOD_LABEL: Record<string, string> = {
   angry: 'Angry', sad: 'Sad',        sleepy: 'Sleepy',
 };
 
-const angryJson = require('@/assets/animations/stressed3.json');
-
+const MOOD_ANIMATION: Record<string, any> = {
+  happy: require('@/assets/animations/happy2.json'),
+  neutral: require('@/assets/animations/neutral.json'),
+  stressed: require('@/assets/animations/stressed3.json'),
+  angry: require('@/assets/animations/angry3.json'),
+  sad: require('@/assets/animations/sad2.json'),
+  sleepy: require('@/assets/animations/sleepy2.json'),
+};
+const MOOD_CROP: Record<string, { x: number; y: number; w: number; h: number }> = {
+  neutral:  { x: 0.135, y: 0.10, w: 0.73, h: 0.80 },
+  happy:    { x: 0.125, y: 0.10, w: 0.75, h: 0.80 },
+  stressed: { x: 0.12,  y: 0.10, w: 0.76, h: 0.80 },
+  angry:    { x: 0.12,  y: 0.10, w: 0.76, h: 0.80 },
+  sad:      { x: 0.13,  y: 0.11, w: 0.74, h: 0.79 },
+  sleepy:   { x: 0.14,  y: 0.10, w: 0.72, h: 0.80 },
+};
 const TRANSIT_URL = 'https://c3db-2607-fea8-fd90-7a41-8efa-38bb-2d75-67ba.ngrok-free.app/api/transit/next';
 const STORAGE_KEY = 'commute_selected_line';
 
@@ -152,13 +167,30 @@ export default function HomeScreen() {
   const battery   = isConnected ? (data.batteryPercent ?? null) : null;
   const stepPct   = Math.min((steps / 10000) * 100, 100);
 
-  const activeMood = mood ?? null;
+    const activeMood = mood ?? null;
+    const crop = MOOD_CROP[activeMood ?? 'neutral'] ?? MOOD_CROP.neutral;
+
+  const animationJson = useMemo(() => {
+    const moodKey = activeMood ?? 'neutral';
+    return MOOD_ANIMATION[moodKey] ?? MOOD_ANIMATION.neutral;
+  }, [activeMood]);
 
   const skottieAnimation = useMemo(() => {
-    return Skia.Skottie.Make(JSON.stringify(angryJson));
-  }, []);
+    return Skia.Skottie.Make(JSON.stringify(animationJson));
+  }, [animationJson]);
 
   const animationSize = skottieAnimation?.size();
+    const clock = useClock();
+
+  const frame = useDerivedValue(() => {
+    if (!skottieAnimation) return 0;
+
+    const fps = skottieAnimation.fps();
+    const duration = skottieAnimation.duration();
+    const totalFrames = Math.max(1, Math.floor(duration * fps));
+
+    return Math.floor((clock.value / 1000) * fps) % totalFrames;
+  }, [clock, skottieAnimation]);
   const moodColor  = activeMood ? (MOOD_COLOR[activeMood] ?? C.blue) : C.textTert;
   const moodLabel  = activeMood ? (MOOD_LABEL[activeMood] ?? activeMood) : 'Not detected';
 
@@ -257,18 +289,23 @@ export default function HomeScreen() {
   
 
   {skottieAnimation && animationSize ? (
-    <View style={{ zIndex: 2 }}>
-      <Canvas style={{ width: 150, height: 150 }}>
+    <View style={{ width: '92%', height: 150 }}>
+      <Canvas style={{ flex: 1 }}>
         <FitBox
-          src={rect(0, 0, animationSize.width, animationSize.height)}
-          dst={rect(10, 10, 100, 100)}
+          src={rect(
+    animationSize.width * crop.x,
+    animationSize.height * crop.y,
+    animationSize.width * crop.w,
+    animationSize.height * crop.h
+  )}
+  dst={rect(0, 0, 310, 150)}
         >
-          <Skottie animation={skottieAnimation} frame={0} />
+          <Skottie animation={skottieAnimation} frame={frame} />
         </FitBox>
       </Canvas>
     </View>
   ) : (
-    <View style={{ width: 150, height: 150, alignItems: 'center', justifyContent: 'center' }}>
+    <View style={{ width: 250, height: 250, alignItems: 'center', justifyContent: 'center' }}>
       <Text style={{ color: '#fff' }}>Animation failed to load</Text>
     </View>
   )}
@@ -432,7 +469,7 @@ export default function HomeScreen() {
 const S = StyleSheet.create({
 
     lottieCard: {
-      backgroundColor: '#232323',
+      backgroundColor: '#1b1b1dff',
       borderRadius: 20,
       borderWidth: 10,
       borderColor: '#e5f0ae', // light green
